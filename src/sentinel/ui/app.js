@@ -2649,6 +2649,13 @@
       sendBtnEl.onclick = async () => {
         const content = inputEl.value.trim();
         if (!content) return;
+        // Read the channel from state: this handler lives in
+        // renderDictionaryChatBody(), which has no channelId in scope.
+        const targetChannelId = state.dictionary.selectedChannelId;
+        if (!targetChannelId) {
+          showToast('No channel selected', 'error');
+          return;
+        }
         sendBtnEl.disabled = true;
         sendBtnEl.textContent = 'Sending...';
         try {
@@ -2656,7 +2663,7 @@
             method: 'POST',
             body: {
               type: 'bot',
-              channel_id: channelId,
+              channel_id: targetChannelId,
               content: content,
               reply_to_message_id: state.dictionary.replyTo ? state.dictionary.replyTo.message_id : null,
               mention_author: true
