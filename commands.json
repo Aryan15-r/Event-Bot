@@ -1,0 +1,145 @@
+[
+  {
+    "name": "event",
+    "description": "Post or edit your latest event announcement",
+    "type": 1,
+    "options": [
+      {
+        "name": "event_type",
+        "description": "Type of the event",
+        "type": 3,
+        "required": true,
+        "choices": [
+          { "name": "Combat Training (CT)", "value": "Combat Training (CT)" },
+          { "name": "General Training (GT)", "value": "General Training (GT)" },
+          { "name": "Defence Training (DT)", "value": "Defence Training (DT)" },
+          { "name": "Carida Combat Training", "value": "Carida Combat Training" },
+          { "name": "Carida General Training", "value": "Carida General Training" },
+          { "name": "Carida Defence Training", "value": "Carida Defence Training" },
+          { "name": "Server Start-Up (SSU)", "value": "Server Start-Up (SSU)" },
+          { "name": "Rebel Challenge", "value": "Rebel Challenge" },
+          { "name": "Obby Challenge", "value": "Obby Challenge" }
+        ]
+      },
+      {
+        "name": "starts_at",
+        "description": "Event start time",
+        "type": 3,
+        "required": true
+      },
+      {
+      "name": "co_host",
+      "description": "The Co-Host for this event",
+      "type": 6,
+      "required": false
+    },
+    {
+      "name": "supervisor",
+      "description": "The Supervisor for this event",
+      "type": 6,
+      "required": false
+    },
+      {
+        "name": "private_server_link",
+        "description": "Private server link (CT / GT only)",
+        "type": 3,
+        "required": false
+      },
+      {
+        "name": "notes",
+        "description": "Additional notes",
+        "type": 3,
+        "required": false
+      },
+      {
+        "name": "edit",
+        "description": "Edit your latest event instead of creating a new one",
+        "type": 5,
+        "required": false
+      },
+      {
+        "name": "msg_id",
+        "description": "ADMIN only: override which event to edit",
+        "type": 3,
+        "required": false
+      }
+    ]
+  },
+
+  {
+    "name": "event-status",
+    "description": "Update or edit the status of your latest event",
+    "type": 1,
+    "options": [
+      {
+        "name": "status",
+        "description": "New event status",
+        "type": 3,
+        "required": true,
+        "choices": [
+          { "name": "Cancelled", "value": "Cancelled" },
+          { "name": "Concluded", "value": "Concluded" }
+        ]
+      },
+      {
+        "name": "number",
+        "description": "Event number (for Concluded)",
+        "type": 4,
+        "required": false
+      },
+      {
+        "name": "edit",
+        "description": "Edit your latest event status",
+        "type": 5,
+        "required": false
+      },
+      {
+        "name": "msg_id",
+        "description": "ADMIN only: override which event to edit",
+        "type": 3,
+        "required": false
+      }
+    ]
+  },
+  {
+      "name": "web",
+      "description": "Launch the Palladium Works official website/portal activity.",
+      "type": 1,
+      "options":[
+        {
+        "name": "choices",
+        "description": "Choose between the official website and portal activities.",
+        "type": 3,
+        "required": true,
+        "choices": [
+          { "name": "Website", "value": "Website" },
+          { "name": "Portal", "value": "Portal" }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "link",
+    "description": "Launch the Palladium Works official portal.",
+    "type": 1
+  },
+  {
+    "name": "transcript",
+    "description": "Collect channel messages and generate a public web transcript link",
+    "type": 1,
+    "options": [
+      {
+        "name": "limit",
+        "description": "Number of messages to collect (10 to 100, default 50)",
+        "type": 4,
+        "required": false
+      },
+      {
+        "name": "channel",
+        "description": "Channel to transcribe (defaults to current channel)",
+        "type": 7,
+        "required": false
+      }
+    ]
+  }
+]

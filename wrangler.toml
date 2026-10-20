@@ -1,0 +1,25 @@
+name = "discord-event-bot"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "event_logs"
+database_id = "51cc1ed9-d484-44a0-8c70-64f71ca1c9ca"
+
+[[d1_databases]]
+binding = "TRANSCRIPTS_DB"
+database_name = "staff-digest"
+database_id = "d8bb06f3-4c67-4c75-93b6-eabbb284e289"
+
+[vars]
+TIME_ZONE = "Asia/Kolkata"
+ENABLE_REPLIES = "true"
+DIGEST_MAX_DAYS = "14"
+APP_BASE_URL = "https://discord-event-bot.tgia.workers.dev"
+
+
+

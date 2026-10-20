@@ -1,0 +1,26 @@
+CREATE TABLE events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  host_name TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Scheduled',
+  message_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  guild_id TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+
+wrangler d1 execute event_logs ^
+  --command="DROP TABLE deleted_logs;" ^
+  --remote
+
+
+cd /d E:\discord-event-bot
+wrangler d1 execute event_logs --file=schema.sql --remote
+
+
+wrangler d1 execute event_logs --command="PRAGMA table_info(events);" --remote
+
+wrangler d1 execute DB --command "SELECT name FROM sqlite_master WHERE type='table';"

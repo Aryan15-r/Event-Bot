@@ -1,0 +1,69 @@
+[
+  {
+    "name": "event",
+    "description": "Post or edit your latest event announcement",
+    "type": 1,
+    "options": [
+      {
+        "name": "event_type",
+        "description": "Type of the event",
+        "type": 3,
+        "required": true
+      },
+      {
+        "name": "starts_at",
+        "description": "Event start time",
+        "type": 3,
+        "required": true
+      },
+      {
+        "name": "private_server_link",
+        "description": "Private server link (CT / GT only)",
+        "type": 3,
+        "required": false
+      },
+      {
+        "name": "notes",
+        "description": "Additional notes",
+        "type": 3,
+        "required": false
+      },
+      {
+        "name": "edit",
+        "description": "Edit your latest event instead of creating a new one",
+        "type": 5,
+        "required": false
+      }
+    ]
+  },
+
+  {
+    "name": "event-status",
+    "description": "Update or edit the status of your latest event",
+    "type": 1,
+    "options": [
+      {
+        "name": "status",
+        "description": "New event status",
+        "type": 3,
+        "required": true,
+        "choices": [
+          { "name": "Cancelled", "value": "Cancelled" },
+          { "name": "Concluded", "value": "Concluded" }
+        ]
+      },
+      {
+        "name": "number",
+        "description": "Event number (for Concluded)",
+        "type": 4,
+        "required": false
+      },
+      {
+        "name": "edit",
+        "description": "Edit your latest event status",
+        "type": 5,
+        "required": false
+      }
+    ]
+  }
+]

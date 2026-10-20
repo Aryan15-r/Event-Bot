@@ -1,0 +1,27 @@
+[
+  {
+    "name": "event",
+    "description": "Post an event announcement",
+    "type": 1,
+    "options": [
+      {
+        "name": "event_type",
+        "description": "Type of event",
+        "type": 3,
+        "required": true
+      },
+      {
+        "name": "host",
+        "description": "Event host",
+        "type": 6,
+        "required": true
+      },
+      {
+        "name": "starts_at",
+        "description": "Start time",
+        "type": 3,
+        "required": true
+      }
+    ]
+  }
+]

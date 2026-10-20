@@ -1,0 +1,18 @@
+{
+  "name": "discord-event-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "discord-interactions": "^4.4.0",
+    "tweetnacl": "^1.0.3",
+    "wrangler": "^4.61.1"
+  },
+  "scripts": {
+    "register": "node register.js",
+    "build:assets": "node scripts/bundle-sentinel-assets.js",
+    "test": "node --test",
+    "start": "wrangler deploy",
+    "dev": "wrangler dev"
+  }
+}

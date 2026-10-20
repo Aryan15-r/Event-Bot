@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Event Logs</title>
+  <style>
+    body { background:#0b0b12; color:#fff; font-family:sans-serif }
+    table { width:100%; border-collapse:collapse }
+    th,td { padding:8px; border-bottom:1px solid #333 }
+    .Scheduled { color:#4ade80 }
+    .Cancelled { color:#f87171 }
+    .Concluded { color:#a1a1aa }
+  </style>
+</head>
+<body>
+<h2>📜 Event Logs</h2>
+<table id="t"></table>
+
+<script>
+fetch("/api/events").then(r=>r.json()).then(rows=>{
+  const t=document.getElementById("t");
+  t.innerHTML="<tr><th>Type</th><th>Host</th><th>Starts</th><th>Status</th></tr>";
+  rows.forEach(e=>{
+    t.innerHTML+=`
+      <tr>
+        <td>${e.event_type}</td>
+        <td>${e.host_name}</td>
+        <td>${e.starts_at}</td>
+        <td class="${e.status}">${e.status}</td>
+      </tr>`;
+  });
+});
+</script>
+</body>
+</html>

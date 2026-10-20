@@ -1,0 +1,36 @@
+CREATE TABLE events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  host_name TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Scheduled',
+  message_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  guild_id TEXT NOT NULL,
+  link TEXT,
+  co_host_id TEXT,
+  supervisor_id TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+); 
+
+
+-- ===== AUDIT LOGS =====
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  actor_name TEXT NOT NULL,
+  target_id INTEGER,
+  snapshot TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ===== DELETED EVENTS (FOR UNDO) =====
+CREATE TABLE IF NOT EXISTS deleted_events (
+  id INTEGER PRIMARY KEY,
+  data TEXT NOT NULL,
+  deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+/* wrangler d1 execute DB --command "ALTER TABLE events ADD COLUMN link TEXT NOT NULL;" */
