@@ -1108,25 +1108,46 @@
 
   // Helper: Renders Discord Rich Embeds into DOM HTML
   function renderEmbedCardHtml(em) {
-    if (!em) return '';
-    let colorHex = '#5865F2';
-    if (em.hexColor) {
-      colorHex = em.hexColor;
-    } else if (em.color != null) {
-      colorHex = '#' + Number(em.color).toString(16).padStart(6, '0');
+    if (!em || typeof em !== 'object') return '';
+
+    // Color resolution (handles hex string, integer, or default)
+    let colorHex = '#202225';
+    const c = em.color ?? em.hexColor;
+    if (c != null) {
+      if (typeof c === 'number') {
+        if (c !== 0) colorHex = '#' + c.toString(16).padStart(6, '0');
+      } else if (typeof c === 'string') {
+        const clean = c.trim().replace(/^#/, '');
+        if (/^[0-9a-fA-F]{3,8}$/.test(clean)) {
+          colorHex = '#' + clean;
+        }
+      }
     }
 
     let html = `<div class="discord-embed-card" style="border-left: 4px solid ${escapeHtml(colorHex)};">`;
 
+    // Provider (if any)
+    if (em.provider && em.provider.name) {
+      html += `<div class="embed-provider">${escapeHtml(em.provider.name)}</div>`;
+    }
+
     // Embed Author
-    if (em.author && em.author.name) {
+    const authorName = em.author?.name || em.authorName;
+    const authorUrl = em.author?.url || em.authorUrl;
+    const authorIcon = em.author?.icon_url || em.author?.iconUrl || em.authorIcon;
+    if (authorName) {
       html += `
         <div class="embed-author">
-          ${em.author.icon_url ? `<img src="${escapeHtml(em.author.icon_url)}" class="embed-author-icon" onerror="this.style.display='none'" />` : ''}
-          ${em.author.url ? `<a href="${escapeHtml(em.author.url)}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;">${escapeHtml(em.author.name)}</a>` : `<span>${escapeHtml(em.author.name)}</span>`}
+          ${authorIcon ? `<img src="${escapeHtml(authorIcon)}" class="embed-author-icon" onerror="this.style.display='none'" />` : ''}
+          ${authorUrl ? `<a href="${escapeHtml(authorUrl)}" target="_blank" rel="noopener noreferrer" class="embed-author-link">${escapeHtml(authorName)}</a>` : `<span>${escapeHtml(authorName)}</span>`}
         </div>
       `;
     }
+
+    // Body with Upper-Right Thumbnail Grid
+    const thumbUrl = em.thumbnail?.url || em.thumbnailUrl;
+    html += `<div class="embed-grid">`;
+    html += `<div class="embed-main-col">`;
 
     // Embed Title
     if (em.title) {
@@ -1142,44 +1163,60 @@
       html += `<div class="embed-description">${formatDiscordMarkdown(em.description)}</div>`;
     }
 
+    html += `</div>`; // end embed-main-col
+
+    // Embed Thumbnail (Upper Right)
+    if (thumbUrl) {
+      html += `
+        <div class="embed-thumb-col">
+          <a href="${escapeHtml(thumbUrl)}" target="_blank" rel="noopener noreferrer">
+            <img src="${escapeHtml(thumbUrl)}" class="embed-thumb-img" onerror="this.parentElement.style.display='none'" loading="lazy" />
+          </a>
+        </div>
+      `;
+    }
+    html += `</div>`; // end embed-grid
+
     // Embed Fields
     if (Array.isArray(em.fields) && em.fields.length > 0) {
-      html += `<div class="embed-fields-grid">`;
-      for (const f of em.fields) {
-        if (!f.name && !f.value) continue;
-        html += `
-          <div class="embed-field" style="${f.inline ? '' : 'grid-column: 1 / -1;'}">
-            <div class="embed-field-name">${escapeHtml(f.name)}</div>
-            <div class="embed-field-value">${formatDiscordMarkdown(f.value)}</div>
-          </div>
-        `;
+      const validFields = em.fields.filter(f => f && (f.name || f.value));
+      if (validFields.length > 0) {
+        html += `<div class="embed-fields-grid">`;
+        for (const f of validFields) {
+          html += `
+            <div class="embed-field ${f.inline ? 'inline' : 'block'}">
+              <div class="embed-field-name">${formatDiscordMarkdown(f.name || '')}</div>
+              <div class="embed-field-value">${formatDiscordMarkdown(f.value || '')}</div>
+            </div>
+          `;
+        }
+        html += `</div>`;
       }
-      html += `</div>`;
     }
 
-    // Embed Thumbnail or Image
-    if (em.thumbnail && em.thumbnail.url) {
+    // Embed Large Image
+    const imgUrl = em.image?.url || em.imageUrl;
+    if (imgUrl) {
       html += `
-        <div style="margin-top: 6px;">
-          <img src="${escapeHtml(em.thumbnail.url)}" style="max-width: 90px; max-height: 90px; border-radius: 4px; object-fit: cover;" onerror="this.style.display='none'" />
-        </div>
-      `;
-    }
-    if (em.image && em.image.url) {
-      html += `
-        <div style="margin-top: 6px;">
-          <img src="${escapeHtml(em.image.url)}" style="max-width: 100%; max-height: 280px; border-radius: 4px; object-fit: contain;" onerror="this.style.display='none'" />
+        <div class="embed-image-wrap">
+          <a href="${escapeHtml(imgUrl)}" target="_blank" rel="noopener noreferrer">
+            <img src="${escapeHtml(imgUrl)}" class="embed-image-img" onerror="this.parentElement.style.display='none'" loading="lazy" />
+          </a>
         </div>
       `;
     }
 
-    // Embed Footer
-    if (em.footer && (em.footer.text || em.timestamp)) {
+    // Embed Footer & Timestamp
+    const footerText = em.footer?.text || em.footerText;
+    const footerIcon = em.footer?.icon_url || em.footer?.iconUrl || em.footerIcon;
+    const timestamp = em.timestamp;
+    if (footerText || timestamp) {
       html += `
         <div class="embed-footer">
-          ${em.footer.icon_url ? `<img src="${escapeHtml(em.footer.icon_url)}" class="embed-footer-icon" onerror="this.style.display='none'" />` : ''}
-          <span>${escapeHtml(em.footer.text || '')}</span>
-          ${em.timestamp ? `<span>• ${formatIST(em.timestamp)}</span>` : ''}
+          ${footerIcon ? `<img src="${escapeHtml(footerIcon)}" class="embed-footer-icon" onerror="this.style.display='none'" />` : ''}
+          <span>${escapeHtml(footerText || '')}</span>
+          ${(footerText && timestamp) ? '<span style="color: #64748B;">•</span>' : ''}
+          ${timestamp ? `<time title="${escapeHtml(timestamp)}">${formatIST(timestamp)}</time>` : ''}
         </div>
       `;
     }
@@ -2396,6 +2433,20 @@
     }
 
     // Default: 'discord' view
+    const membersMap = new Map();
+    for (const m of messages) {
+      if (m.author_id) {
+        membersMap.set(m.author_id, m.author_display_name || m.author_username);
+      }
+    }
+    const channelsMap = new Map();
+    if (state.channels) {
+      for (const c of state.channels) {
+        channelsMap.set(c.channel_id, c.name);
+      }
+    }
+    const mdContext = { membersMap, channelsMap };
+
     let html = `<div class="discord-modal-feed">`;
     let lastDateStr = null;
 
@@ -2416,30 +2467,14 @@
       }
 
       const reply = resolveMessageReply(msg, allMessagesMap);
-      let replyLeadHtml = '';
-      if (reply) {
-        const replyAuthor = escapeHtml(reply.author_name || reply.author_username || 'User');
-        const replyAvatar = reply.author_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
-        const replySnippet = escapeHtml(reply.content ? (reply.content.slice(0, 80) + (reply.content.length > 80 ? '…' : '')) : '[Attachment / Embed]');
-        const replyTime = reply.created_at ? new Date(reply.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-
-        replyLeadHtml = `
-          <div class="discord-thread-lead" onclick="jumpToMessage('${reply.message_id}')" title="Click to jump to referenced message">
-            <div class="thread-spine"></div>
-            <img class="thread-avatar" src="${replyAvatar}" alt="${replyAuthor}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
-            <span class="thread-author">@${replyAuthor}</span>
-            <span class="thread-snippet">${replySnippet}</span>
-            <span class="thread-time">${replyTime}</span>
-          </div>
-        `;
-      }
+      const replyLeadHtml = renderReplyLeadHtml(reply);
 
       const avatar = msg.author_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
       const author = escapeHtml(msg.author_display_name || msg.author_username || 'User');
       const username = escapeHtml(msg.author_username || '');
       const timeFormatted = msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
       const fullIso = msg.created_at || '';
-      const formattedContent = formatDiscordMarkdown(msg.content);
+      const formattedContent = formatDiscordMarkdown(msg.content, mdContext);
 
       let atts = [];
       try { atts = typeof msg.attachments_json === 'string' ? JSON.parse(msg.attachments_json) : (msg.attachments_json || []); } catch {}
@@ -2488,10 +2523,37 @@
     feed.innerHTML = html;
   }
 
+  // Helper: Renders Discord Thread / Reply Lead Header
+  function renderReplyLeadHtml(reply) {
+    if (!reply) return '';
+    const hasAuthor = Boolean(reply.author_name || reply.author_username);
+    const hasContent = Boolean(reply.content != null && reply.content !== '');
+    const isDeleted = !hasAuthor && !hasContent;
+
+    const replyAuthor = escapeHtml(reply.author_name || reply.author_username || 'User');
+    const replyAvatar = reply.author_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
+    const replySnippet = hasContent
+      ? escapeHtml(reply.content.slice(0, 80) + (reply.content.length > 80 ? '…' : ''))
+      : (isDeleted ? '<span class="thread-deleted">Original message was deleted.</span>' : '<span style="color: #7289da; font-style: italic;">[Attachment / Embed]</span>');
+    const replyTime = reply.created_at ? new Date(reply.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+    return `
+      <div class="discord-thread-lead" onclick="jumpToMessage('${reply.message_id || ''}')" title="Click to jump to referenced message">
+        <div class="thread-spine"></div>
+        ${!isDeleted ? `<img class="thread-avatar" src="${replyAvatar}" alt="${replyAuthor}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />` : ''}
+        ${!isDeleted ? `<span class="thread-author">@${replyAuthor}</span>` : ''}
+        <span class="thread-snippet">${replySnippet}</span>
+        ${replyTime ? `<span class="thread-time">${replyTime}</span>` : ''}
+      </div>
+    `;
+  }
+
   // Jump to referenced message helper on window
   window.jumpToMessage = function(msgId) {
     if (!msgId) return;
-    const target = document.getElementById('dict-msg-' + msgId);
+    const target = document.getElementById('dict-msg-' + msgId) ||
+                   document.getElementById('msg-' + msgId) ||
+                   document.querySelector(`[data-msgid="${msgId}"]`);
     if (target) {
       target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       target.classList.add('msg-highlight-flash');
@@ -2690,6 +2752,22 @@
     }
 
     // Group by Day (IST)
+    const streamMessagesMap = new Map();
+    const streamMembersMap = new Map();
+    for (const m of state.messages) {
+      streamMessagesMap.set(m.message_id, m);
+      if (m.author_id) {
+        streamMembersMap.set(m.author_id, m.author_display_name || m.author_username);
+      }
+    }
+    const streamChannelsMap = new Map();
+    if (state.channels) {
+      for (const c of state.channels) {
+        streamChannelsMap.set(c.channel_id, c.name);
+      }
+    }
+    const streamMdContext = { membersMap: streamMembersMap, channelsMap: streamChannelsMap };
+
     const grouped = new Map();
     for (const msg of state.messages) {
       const day = formatDayGroupIST(msg.created_at);
@@ -2743,6 +2821,9 @@
           return pingRegex.test(fullSearchText);
         });
 
+        const reply = resolveMessageReply(msg, streamMessagesMap);
+        const replyLeadHtml = renderReplyLeadHtml(reply);
+
         let cardClass = 'message-card';
         if (isAuthorTracked) {
           cardClass += ' message-card-priority';
@@ -2751,52 +2832,54 @@
         }
 
         htmlParts.push(`
-          <div class="${cardClass}" data-msgid="${msg.message_id}" data-guild="${msg.guild_id}" data-channel="${msg.channel_id}" data-authorid="${msg.author_id}" data-author="${escapeHtml(msg.author_display_name || msg.author_username)}" data-text="${escapeHtml(msg.content || '')}">
-            <div class="message-avatar">${authorInitial}</div>
-            <div class="message-body">
-              <div class="message-meta">
-                <span class="message-author">${escapeHtml(msg.author_display_name || msg.author_username)}</span>
-                ${msg.author_username ? `<span class="message-username">@${escapeHtml(msg.author_username)}</span>` : ''}
-                <span class="message-channel"># ${escapeHtml(msg.channel_name || 'channel')}</span>
-                <span style="font-size: 11px; color: var(--text-muted);">${escapeHtml(msg.guild_name || '')}</span>
+          <div class="${cardClass}" id="dict-msg-${msg.message_id}" data-msgid="${msg.message_id}" data-guild="${msg.guild_id}" data-channel="${msg.channel_id}" data-authorid="${msg.author_id}" data-author="${escapeHtml(msg.author_display_name || msg.author_username)}" data-text="${escapeHtml(msg.content || '')}">
+            ${replyLeadHtml}
+            <div style="display: flex; gap: 12px; width: 100%;">
+              <div class="message-avatar">${authorInitial}</div>
+              <div class="message-body" style="flex: 1; min-width: 0;">
+                <div class="message-meta">
+                  <span class="message-author">${escapeHtml(msg.author_display_name || msg.author_username)}</span>
+                  ${msg.author_username ? `<span class="message-username">@${escapeHtml(msg.author_username)}</span>` : ''}
+                  <span class="message-channel"># ${escapeHtml(msg.channel_name || 'channel')}</span>
+                  <span style="font-size: 11px; color: var(--text-muted);">${escapeHtml(msg.guild_name || '')}</span>
 
-                ${isAuthorTracked ? `<span class="badge badge-priority" title="Tracked Member: ${escapeHtml(authorTracked.label || authorTracked.member_id)}">⭐ VIP: ${escapeHtml(authorTracked.label || authorTracked.member_id)}</span>` : ''}
-                ${pingedTracked.map(pt => `<span class="badge badge-ping" title="Direct Mention">🔔 Ping: ${escapeHtml(pt.label || pt.member_id)}</span>`).join('')}
-                ${hasQuestion || isHelp ? `<span class="badge badge-warning">Needs Attention</span>` : ''}
+                  ${isAuthorTracked ? `<span class="badge badge-priority" title="Tracked Member: ${escapeHtml(authorTracked.label || authorTracked.member_id)}">⭐ VIP: ${escapeHtml(authorTracked.label || authorTracked.member_id)}</span>` : ''}
+                  ${pingedTracked.map(pt => `<span class="badge badge-ping" title="Direct Mention">🔔 Ping: ${escapeHtml(pt.label || pt.member_id)}</span>`).join('')}
+                  ${hasQuestion || isHelp ? `<span class="badge badge-warning">Needs Attention</span>` : ''}
 
-                <span class="message-time">${formatTimeOnlyIST(msg.created_at)}</span>
+                  <span class="message-time">${formatTimeOnlyIST(msg.created_at)}</span>
 
-                <button class="reply-btn quick-reply-btn" 
-                  data-guild="${msg.guild_id}" 
-                  data-channel="${msg.channel_id}" 
-                  data-msgid="${msg.message_id}" 
-                  data-author="${escapeHtml(msg.author_display_name || msg.author_username)}" 
-                  data-snippet="${escapeHtml((msg.content || (embeds[0] ? (embeds[0].title || embeds[0].description) : '') || '').slice(0, 100))}"
-                  title="Reply to this message"
-                >↩️ Reply</button>
+                  <button class="reply-btn quick-reply-btn" 
+                    data-guild="${msg.guild_id}" 
+                    data-channel="${msg.channel_id}" 
+                    data-msgid="${msg.message_id}" 
+                    data-author="${escapeHtml(msg.author_display_name || msg.author_username)}" 
+                    data-snippet="${escapeHtml((msg.content || (embeds[0] ? (embeds[0].title || embeds[0].description) : '') || '').slice(0, 100))}"
+                    title="Reply to this message"
+                  >↩️ Reply</button>
 
-                ${authorTracked ? `
-                  <button class="track-btn active open-manager-btn" title="Tracked VIP Member. Click to manage.">
-                    ⭐ Tracked
-                  </button>
-                ` : `
-                  <button class="track-btn quick-track-btn" 
-                    data-id="${msg.author_id}" 
-                    data-name="${escapeHtml(msg.author_display_name || msg.author_username)}"
-                    title="1-click track this member to highlight their messages and direct pings"
-                  >
-                    ⭐ Track
-                  </button>
-                `}
-              </div>
-
-              ${msg.content ? `<div class="message-text">${formatDiscordMarkdown(msg.content)}</div>` : ''}
-
-              ${embeds.length > 0 ? `
-                <div class="message-embeds-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: ${msg.content ? '8px' : '2px'};">
-                  ${embeds.map(em => renderEmbedCardHtml(em)).join('')}
+                  ${authorTracked ? `
+                    <button class="track-btn active open-manager-btn" title="Tracked VIP Member. Click to manage.">
+                      ⭐ Tracked
+                    </button>
+                  ` : `
+                    <button class="track-btn quick-track-btn" 
+                      data-id="${msg.author_id}" 
+                      data-name="${escapeHtml(msg.author_display_name || msg.author_username)}"
+                      title="1-click track this member to highlight their messages and direct pings"
+                    >
+                      ⭐ Track
+                    </button>
+                  `}
                 </div>
-              ` : ''}
+
+                ${msg.content ? `<div class="message-text">${formatDiscordMarkdown(msg.content, streamMdContext)}</div>` : ''}
+
+                ${embeds.length > 0 ? `
+                  <div class="message-embeds-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: ${msg.content ? '8px' : '2px'};">
+                    ${embeds.map(em => renderEmbedCardHtml(em)).join('')}
+                  </div>
+                ` : ''}
 
               ${!msg.content && embeds.length === 0 && attachments.length === 0 ? `
                 <div class="message-text" style="color: var(--text-muted); font-style: italic;">(Empty message)</div>
@@ -2813,6 +2896,7 @@
                   `).join('')}
                 </div>
               ` : ''}
+              </div>
             </div>
           </div>
         `);
@@ -2997,24 +3081,63 @@
   }
 
   // Helper: Simple Discord Markdown Formatter for Live Preview
-  function formatDiscordMarkdown(str) {
+  function formatDiscordMarkdown(str, context = {}) {
     if (!str) return '';
-    let escaped = escapeHtml(str);
+    let escaped = escapeHtml(String(str));
 
     // ANSI Code Blocks: ```ansi ... ```
     escaped = escaped.replace(/```ansi\n?([\s\S]*?)```/gi, (match, p1) => {
       const rendered = renderAnsi(p1);
-      return `<pre style="background: #1E1F22; padding: 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 13px; line-height: 1.45; margin: 6px 0; overflow-x: auto; border: 1px solid rgba(255,255,255,0.06); color: #DBDEE1;"><code>${rendered}</code></pre>`;
+      return `<pre class="discord-code-block discord-code-ansi"><code>${rendered}</code></pre>`;
     });
 
     // Standard Code Blocks
-    escaped = escaped.replace(/```([a-z0-9_-]*)\n?([\s\S]*?)```/gi, '<pre style="background: #1E1F22; padding: 10px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px; margin: 6px 0; overflow-x: auto; color: #DBDEE1;"><code>$2</code></pre>');
+    escaped = escaped.replace(/```([a-z0-9_-]*)\n?([\s\S]*?)```/gi, '<pre class="discord-code-block"><code class="lang-$1">$2</code></pre>');
 
     // Inline code
-    escaped = escaped.replace(/`([^`\n]+)`/g, '<code style="background: #1E1F22; padding: 2px 4px; border-radius: 3px; font-family: var(--font-mono); font-size: 12px; color: #DBDEE1;">$1</code>');
+    escaped = escaped.replace(/`([^`\n]+)`/g, '<code class="discord-inline-code">$1</code>');
+
+    // Discord Custom Emojis: <:name:id> or <a:name:id>
+    escaped = escaped.replace(/&lt;(a?):([a-zA-Z0-9_~]+):(\d+)&gt;/g, (match, anim, name, id) => {
+      const ext = anim === 'a' ? 'gif' : 'webp';
+      return `<img class="discord-custom-emoji" src="https://cdn.discordapp.com/emojis/${id}.${ext}?size=48&quality=lossless" alt=":${name}:" title=":${name}:" onerror="this.onerror=null;this.src='https://cdn.discordapp.com/emojis/${id}.png';" loading="lazy" />`;
+    });
+
+    // Discord Mentions:
+    // User mentions: <@id> or <@!id>
+    escaped = escaped.replace(/&lt;@!?(\d+)&gt;/g, (match, id) => {
+      let label = '@User';
+      if (context && context.membersMap && context.membersMap.has(id)) {
+        label = '@' + context.membersMap.get(id);
+      } else if (state && state.trackedMembers) {
+        const tm = state.trackedMembers.find(m => String(m.member_id) === String(id));
+        if (tm) label = '@' + (tm.display_name || tm.username || 'User');
+      }
+      return `<span class="discord-mention discord-user-mention" data-user-id="${id}" title="User ID: ${id}">${escapeHtml(label)}</span>`;
+    });
+
+    // Role mentions: <@&id>
+    escaped = escaped.replace(/&lt;@&amp;(\d+)&gt;/g, (match, id) => {
+      return `<span class="discord-mention discord-role-mention" data-role-id="${id}" title="Role ID: ${id}">@role</span>`;
+    });
+
+    // Channel mentions: <#id>
+    escaped = escaped.replace(/&lt;#(\d+)&gt;/g, (match, id) => {
+      let label = '#channel';
+      if (context && context.channelsMap && context.channelsMap.has(id)) {
+        label = '#' + context.channelsMap.get(id);
+      } else if (state && state.channels) {
+        const ch = state.channels.find(c => String(c.channel_id) === String(id));
+        if (ch) label = '#' + (ch.name || 'channel');
+      }
+      return `<span class="discord-mention discord-channel-mention" data-channel-id="${id}" title="Channel ID: ${id}">${escapeHtml(label)}</span>`;
+    });
+
+    // Everyone & Here
+    escaped = escaped.replace(/@(everyone|here)\b/g, '<span class="discord-mention discord-everyone-mention">@$1</span>');
 
     // Discord Subtext: -# line or #- line (BEFORE headers so '#' is not parsed as H1)
-    escaped = escaped.replace(/^(-#|#-\s*|-#\s*)\s*(.*)$/gm, '<small class="discord-subtext" style="color: #949BA4; font-size: 11px; display: block; line-height: 1.4; margin: 2px 0;">$2</small>');
+    escaped = escaped.replace(/^(-#|#-\s*|-#\s*)\s*(.*)$/gm, '<small class="discord-subtext">$2</small>');
 
     // Headers
     escaped = escaped.replace(/^###\s+(.*)$/gm, '<h3 style="font-size: 14px; font-weight: 700; margin: 4px 0 2px 0; color: #F2F3F5;">$1</h3>');
@@ -3025,16 +3148,21 @@
     escaped = escaped.replace(/\|\|(.*?)\|\|/g, '<span class="discord-spoiler" onclick="this.classList.toggle(\'revealed\')" title="Click to reveal spoiler">$1</span>');
 
     // Bold, Italic, Underline, Strikethrough
+    escaped = escaped.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>');
     escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     escaped = escaped.replace(/\*(.*?)\*/g, '<em>$1</em>');
     escaped = escaped.replace(/__(.*?)__/g, '<u>$1</u>');
     escaped = escaped.replace(/~~(.*?)~~/g, '<del>$1</del>');
 
-    // Blockquote
-    escaped = escaped.replace(/^&gt;\s?(.*)$/gm, '<blockquote style="border-left: 4px solid #4E5058; padding-left: 8px; margin: 4px 0; color: #949BA4;">$1</blockquote>');
+    // Blockquote (multi-line >>> then single-line >)
+    escaped = escaped.replace(/^&gt;&gt;&gt;\s?([\s\S]*)$/gm, '<blockquote class="discord-blockquote">$1</blockquote>');
+    escaped = escaped.replace(/^&gt;\s?(.*)$/gm, '<blockquote class="discord-blockquote">$1</blockquote>');
 
     // Masked Links
     escaped = escaped.replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color: #00A8FC; text-decoration: none;">$1</a>');
+
+    // Standard URLs (avoiding existing src/href quotes)
+    escaped = escaped.replace(/(?<!=["'])(https?:\/\/[^\s<>"')]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" style="color: #00A8FC; text-decoration: none;">$1</a>');
 
     // Timestamps: <t:1234567890:R> etc
     escaped = escaped.replace(/&lt;t:(\d+)(?::([a-zA-Z]))?&gt;/g, (match, ts, style) => {
@@ -3046,14 +3174,14 @@
           if (diffSec > 0) timeLabel = `${Math.floor(diffSec / 60)}m ago`;
           else timeLabel = `in ${Math.abs(Math.floor(diffSec / 60))}m`;
         }
-        return `<span style="background: rgba(255, 255, 255, 0.08); padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #DBDEE1;" title="Unix: ${ts}">&lt;t:${ts}${style ? ':' + style : ''}&gt; (${escapeHtml(timeLabel)})</span>`;
+        return `<span class="discord-timestamp-tag" title="Unix: ${ts} (&lt;t:${ts}${style ? ':' + style : ''}&gt;)">${escapeHtml(timeLabel)}</span>`;
       } catch {
         return match;
       }
     });
 
-    // Mention highlights
-    escaped = escaped.replace(/(@[a-zA-Z0-9_#]+)/g, '<span style="background: rgba(88, 101, 242, 0.3); color: #C9CDFB; padding: 1px 4px; border-radius: 3px; font-weight: 500;">$1</span>');
+    // General plain mentions highlight: @Name (standalone only)
+    escaped = escaped.replace(/(^|\s)(@[a-zA-Z0-9_#]+)(?![^<]*>)/g, '$1<span class="discord-mention">$2</span>');
     return escaped;
   }
 

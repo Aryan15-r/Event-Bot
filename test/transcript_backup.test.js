@@ -6,7 +6,11 @@ import {
   formatCanonicalTranscriptJson,
   formatAiTranscriptContext,
   createVerifiedBackup,
-  normalizeDiscordMessage
+  normalizeDiscordMessage,
+  formatDiscordMarkdown,
+  renderTranscriptReplyLead,
+  renderTranscriptEmbedCard,
+  renderTranscriptHtml
 } from '../src/transcripts.js';
 
 test('computeSha256 produces valid 64-character hex hash', async () => {
@@ -191,5 +195,133 @@ test('normalizeDiscordMessage extracts reply_to and formatCanonicalTranscriptTxt
   const parsed = JSON.parse(jsonStr);
   assert.equal(parsed.messages[0].reply_to.message_id, '1000000000000000001');
   assert.equal(parsed.messages[0].reply_to.author_name, 'Alice');
+});
+
+test('formatDiscordMarkdown correctly renders custom emojis, mentions, spoilers, and blockquotes', () => {
+  const input = 'Hello <:party:123456> and <a:dance:789012>! Check <@999> in <#888> with ||secret text||\n-# tiny note\n> quoted text';
+  const html = formatDiscordMarkdown(input, {
+    membersMap: new Map([['999', 'AwesomeUser']]),
+    channelsMap: new Map([['888', 'announcements']])
+  });
+
+  // Custom static emoji
+  assert.match(html, /<img class="discord-custom-emoji" src="https:\/\/cdn\.discordapp\.com\/emojis\/123456\.webp\?size=48&quality=lossless" alt=":party:"/);
+  // Custom animated emoji
+  assert.match(html, /<img class="discord-custom-emoji" src="https:\/\/cdn\.discordapp\.com\/emojis\/789012\.gif\?size=48&quality=lossless" alt=":dance:"/);
+  // User mention with resolved name
+  assert.match(html, /<span class="discord-mention discord-user-mention" data-user-id="999" title="User ID: 999">@AwesomeUser<\/span>/);
+  // Channel mention with resolved name
+  assert.match(html, /<span class="discord-mention discord-channel-mention" data-channel-id="888" title="Channel ID: 888">#announcements<\/span>/);
+  // Spoiler
+  assert.match(html, /<span class="discord-spoiler" onclick="this\.classList\.toggle\('revealed'\)" title="Click to reveal spoiler">secret text<\/span>/);
+  // Subtext
+  assert.match(html, /<small class="discord-subtext">tiny note<\/small>/);
+  // Blockquote
+  assert.match(html, /<blockquote class="discord-blockquote">quoted text<\/blockquote>/);
+});
+
+test('renderTranscriptEmbedCard renders rich Discord layout with hex color, thumbnail grid, fields, and footer', () => {
+  const embed = {
+    color: '#5865f2',
+    provider: { name: 'GitHub' },
+    author: { name: 'Aryan', url: 'https://github.com/Aryan15-r', icon_url: 'https://example.com/icon.png' },
+    title: 'Commit Details',
+    url: 'https://github.com',
+    description: 'Fixed issue with **embed rendering**',
+    thumbnail: { url: 'https://example.com/thumb.png' },
+    fields: [
+      { name: 'Branch', value: '`main`', inline: true },
+      { name: 'Status', value: 'Passed', inline: true },
+      { name: 'Details', value: 'Full CI test passed', inline: false }
+    ],
+    image: { url: 'https://example.com/banner.png' },
+    footer: { text: 'Sentinel Event Bot', icon_url: 'https://example.com/footer.png' },
+    timestamp: '2026-10-20T12:00:00Z'
+  };
+
+  const cardHtml = renderTranscriptEmbedCard(embed);
+  // Border color without #nan
+  assert.match(cardHtml, /border-left: 4px solid #5865f2/);
+  // Provider
+  assert.match(cardHtml, /<div class="embed-provider">GitHub<\/div>/);
+  // Author
+  assert.match(cardHtml, /<img src="https:\/\/example\.com\/icon\.png" class="embed-author-icon"/);
+  assert.match(cardHtml, /<a href="https:\/\/github\.com\/Aryan15-r".*>Aryan<\/a>/);
+  // Grid with thumbnail
+  assert.match(cardHtml, /class="embed-grid"/);
+  assert.match(cardHtml, /<img src="https:\/\/example\.com\/thumb\.png" class="embed-thumb-img"/);
+  // Title & Description
+  assert.match(cardHtml, /<a href="https:\/\/github\.com".*>Commit Details<\/a>/);
+  assert.match(cardHtml, /Fixed issue with <strong>embed rendering<\/strong>/);
+  // Fields (inline and block)
+  assert.match(cardHtml, /class="embed-field inline"/);
+  assert.match(cardHtml, /class="embed-field block"/);
+  assert.match(cardHtml, /<code class="discord-inline-code">main<\/code>/);
+  // Large image
+  assert.match(cardHtml, /<img src="https:\/\/example\.com\/banner\.png" class="embed-image-img"/);
+  // Footer
+  assert.match(cardHtml, /Sentinel Event Bot/);
+  assert.match(cardHtml, /<img src="https:\/\/example\.com\/footer\.png" class="embed-footer-icon"/);
+});
+
+test('renderTranscriptReplyLead renders curved spine, avatar, author, snippet, and handles deleted references', () => {
+  const replyActive = {
+    message_id: '998877',
+    author_display_name: 'Alice',
+    snippet: 'Hey how are you?'
+  };
+
+  const activeHtml = renderTranscriptReplyLead(replyActive);
+  assert.match(activeHtml, /class="discord-thread-lead"/);
+  assert.match(activeHtml, /onclick="jumpToTranscriptMessage\('998877'\)"/);
+  assert.match(activeHtml, /<span class="thread-spine" aria-hidden="true"><\/span>/);
+  assert.match(activeHtml, /<span class="thread-author">Alice<\/span>/);
+  assert.match(activeHtml, /<span class="thread-snippet ">Hey how are you\?<\/span>/);
+
+  const replyDeleted = {
+    message_id: '112233',
+    deleted: true
+  };
+  const deletedHtml = renderTranscriptReplyLead(replyDeleted);
+  assert.match(deletedHtml, /class="thread-snippet thread-deleted">Original message was deleted\.<\/span>/);
+});
+
+test('renderTranscriptHtml includes replies, embeds, custom styles, and jump script', () => {
+  const transcript = {
+    id: 'tr_full_test',
+    channel_name: 'test-room',
+    created_at: '2026-10-20T10:00:00Z',
+    backup_status: 'BACKUP_VERIFIED'
+  };
+
+  const messages = [
+    {
+      message_id: 'msg1',
+      author_id: '123',
+      author_username: 'bob',
+      author_display_name: 'Bob',
+      content: 'Here is an embed <:cool:55555>',
+      created_at: '2026-10-20T10:01:00Z',
+      reply_to: {
+        message_id: 'msg0',
+        author_display_name: 'Alice',
+        snippet: 'Earlier context'
+      },
+      embeds_json: JSON.stringify([{
+        color: 0x5865F2,
+        title: 'Embedded Info',
+        description: 'Testing embed inside transcript'
+      }])
+    }
+  ];
+
+  const html = renderTranscriptHtml(transcript, messages);
+  assert.match(html, /<!DOCTYPE html>/);
+  assert.match(html, /class="discord-thread-lead"/);
+  assert.match(html, /onclick="jumpToTranscriptMessage\('msg0'\)"/);
+  assert.match(html, /<img class="discord-custom-emoji" src="https:\/\/cdn\.discordapp\.com\/emojis\/55555\.webp/);
+  assert.match(html, /class="discord-embed-card"/);
+  assert.match(html, /Embedded Info/);
+  assert.match(html, /function jumpToTranscriptMessage\(msgId\)/);
 });
 

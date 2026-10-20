@@ -1219,19 +1219,70 @@ function escapeHtml(str) {
 
 /**
  * Formats Discord Markdown text to clean HTML.
+ * Supports custom emojis <:name:id>, mentions <@id>, <#id>, <@&id>, @everyone,
+ * spoilers ||text||, blockquotes >>> and >, subtext -#, code blocks, timestamps, and links.
  * @param {string} text 
+ * @param {object} [context]
  */
-function formatDiscordMarkdown(text) {
+export function formatDiscordMarkdown(text, context = {}) {
   if (!text) return '';
-  let safe = escapeHtml(text);
+  let safe = escapeHtml(String(text));
+
+  // ANSI Code blocks: ```ansi ... ```
+  safe = safe.replace(/```ansi\n?([\s\S]*?)```/gi, (_, code) => {
+    return `<pre class="discord-code-block discord-code-ansi"><code>${code}</code></pre>`;
+  });
 
   // Code blocks: ```lang ... ```
-  safe = safe.replace(/```([a-z0-9_-]*)\n([\s\S]*?)```/gi, (_, lang, code) => {
-    return `<pre class="code-block"><code class="lang-${lang}">${code}</code></pre>`;
+  safe = safe.replace(/```([a-z0-9_-]*)\n?([\s\S]*?)```/gi, (_, lang, code) => {
+    return `<pre class="discord-code-block"><code class="lang-${lang}">${code}</code></pre>`;
   });
 
   // Inline code: `...`
-  safe = safe.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
+  safe = safe.replace(/`([^`\n]+)`/g, '<code class="discord-inline-code">$1</code>');
+
+  // Discord Custom Emojis: <:name:id> or <a:name:id>
+  safe = safe.replace(/&lt;(a?):([a-zA-Z0-9_~]+):(\d+)&gt;/g, (match, anim, name, id) => {
+    const ext = anim === 'a' ? 'gif' : 'webp';
+    return `<img class="discord-custom-emoji" src="https://cdn.discordapp.com/emojis/${id}.${ext}?size=48&quality=lossless" alt=":${name}:" title=":${name}:" onerror="this.onerror=null;this.src='https://cdn.discordapp.com/emojis/${id}.png';" loading="lazy" />`;
+  });
+
+  // Discord User Mentions: <@id> or <@!id>
+  safe = safe.replace(/&lt;@!?(\d+)&gt;/g, (match, id) => {
+    let label = '@user';
+    if (context && context.membersMap && context.membersMap.has(id)) {
+      label = '@' + context.membersMap.get(id);
+    }
+    return `<span class="discord-mention discord-user-mention" data-user-id="${id}" title="User ID: ${id}">${escapeHtml(label)}</span>`;
+  });
+
+  // Discord Role Mentions: <@&id>
+  safe = safe.replace(/&lt;@&amp;(\d+)&gt;/g, (match, id) => {
+    return `<span class="discord-mention discord-role-mention" data-role-id="${id}" title="Role ID: ${id}">@role</span>`;
+  });
+
+  // Discord Channel Mentions: <#id>
+  safe = safe.replace(/&lt;#(\d+)&gt;/g, (match, id) => {
+    let label = '#channel';
+    if (context && context.channelsMap && context.channelsMap.has(id)) {
+      label = '#' + context.channelsMap.get(id);
+    }
+    return `<span class="discord-mention discord-channel-mention" data-channel-id="${id}" title="Channel ID: ${id}">${escapeHtml(label)}</span>`;
+  });
+
+  // Everyone & Here
+  safe = safe.replace(/@(everyone|here)\b/g, '<span class="discord-mention discord-everyone-mention">@$1</span>');
+
+  // Discord Subtext: -# line or #- line (BEFORE headers)
+  safe = safe.replace(/^(-#|#-\s*|-#\s*)\s*(.*)$/gm, '<small class="discord-subtext">$2</small>');
+
+  // Headers: ### Header, ## Header, # Header
+  safe = safe.replace(/^###\s+(.*)$/gm, '<h3 style="font-size: 14px; font-weight: 700; margin: 4px 0 2px 0; color: #F2F3F5;">$1</h3>');
+  safe = safe.replace(/^##\s+(.*)$/gm, '<h2 style="font-size: 16px; font-weight: 700; margin: 6px 0 3px 0; color: #F2F3F5;">$1</h2>');
+  safe = safe.replace(/^#\s+(.*)$/gm, '<h1 style="font-size: 18px; font-weight: 700; margin: 8px 0 4px 0; color: #F2F3F5;">$1</h1>');
+
+  // Spoilers: ||text||
+  safe = safe.replace(/\|\|(.*?)\|\|/g, '<span class="discord-spoiler" onclick="this.classList.toggle(\'revealed\')" title="Click to reveal spoiler">$1</span>');
 
   // Bold + Italic: ***text***
   safe = safe.replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>');
@@ -1243,28 +1294,203 @@ function formatDiscordMarkdown(text) {
   safe = safe.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
   safe = safe.replace(/_([^_\n]+)_/g, '<em>$1</em>');
 
+  // Underline: __text__
+  safe = safe.replace(/__(.*?)__/g, '<u>$1</u>');
+
   // Strikethrough: ~~text~~
   safe = safe.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
 
-  // Quotes: > text
-  safe = safe.replace(/^(&gt;|>)\s?(.*)$/gm, '<blockquote class="quote-block">$2</blockquote>');
+  // Blockquotes: >>> (multiline) and > (single line)
+  safe = safe.replace(/^(&gt;&gt;&gt;)\s?([\s\S]*)$/gm, '<blockquote class="discord-blockquote">$2</blockquote>');
+  safe = safe.replace(/^(&gt;|>)\s?(.*)$/gm, '<blockquote class="discord-blockquote">$2</blockquote>');
 
-  // User mentions: &lt;@123456789&gt;
-  safe = safe.replace(/&lt;@!?(\d+)&gt;/g, '<span class="mention user-mention">@user</span>');
+  // Masked links: [title](url)
+  safe = safe.replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
-  // Role mentions: &lt;@&amp;123456789&gt;
-  safe = safe.replace(/&lt;@&amp;(\d+)&gt;/g, '<span class="mention role-mention">@role</span>');
+  // Standard Links: https://... (avoiding already quoted URLs in src/href)
+  safe = safe.replace(/(?<!=["'])(https?:\/\/[^\s<>"')]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 
-  // Channel mentions: &lt;#123456789&gt;
-  safe = safe.replace(/&lt;#(\d+)&gt;/g, '<span class="mention channel-mention">#channel</span>');
+  // Timestamps: <t:1700000000:R>
+  safe = safe.replace(/&lt;t:(\d+)(?::([tTdDfFR]))?&gt;/g, (match, ts, style) => {
+    try {
+      const d = new Date(parseInt(ts, 10) * 1000);
+      let timeLabel = d.toLocaleString();
+      if (style === 'R') {
+        const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+        if (diffSec > 0) timeLabel = `${Math.floor(diffSec / 60)}m ago`;
+        else timeLabel = `in ${Math.abs(Math.floor(diffSec / 60))}m`;
+      }
+      return `<span class="discord-timestamp-tag" title="Unix: ${ts}">&lt;t:${ts}${style ? ':' + style : ''}&gt; (${escapeHtml(timeLabel)})</span>`;
+    } catch {
+      return match;
+    }
+  });
 
-  // Links: https://...
-  safe = safe.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+  // Plain mentions highlight: @username (only when standalone, not inside existing tags)
+  safe = safe.replace(/(^|\s)(@[a-zA-Z0-9_#]+)(?![^<]*>)/g, '$1<span class="discord-mention">$2</span>');
 
   // Newlines
   safe = safe.replace(/\n/g, '<br>');
 
   return safe;
+}
+
+/**
+ * Renders a Discord Reply Lead with authentic curved spine (┌─)
+ * @param {object} reply 
+ */
+export function renderTranscriptReplyLead(reply) {
+  if (!reply || typeof reply !== 'object') return '';
+  const isDeleted = Boolean(reply.is_deleted || reply.deleted);
+  const replyMsgId = reply.message_id || reply.id || '';
+  const authorName = escapeHtml(reply.author_display_name || reply.author_username || reply.username || (isDeleted ? 'Original message deleted' : 'Original message'));
+  let avatarUrl = reply.author_avatar || reply.avatar;
+  if (!avatarUrl && reply.author_id) {
+    try {
+      const idx = Number((BigInt(reply.author_id) >> 22n) % 6n);
+      avatarUrl = `https://cdn.discordapp.com/embed/avatars/${idx}.png`;
+    } catch {
+      avatarUrl = 'https://cdn.discordapp.com/embed/avatars/0.png';
+    }
+  }
+  if (!avatarUrl) avatarUrl = 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+  const snippet = escapeHtml(reply.snippet || reply.content || (isDeleted ? 'Original message was deleted.' : 'Click to jump to replied message'));
+
+  return `
+    <div class="discord-thread-lead" ${replyMsgId ? `onclick="jumpToTranscriptMessage('${escapeHtml(replyMsgId)}')"` : ''} title="${isDeleted ? 'Original message deleted' : 'Jump to replied message'}">
+      <span class="thread-spine" aria-hidden="true"></span>
+      <img src="${escapeHtml(avatarUrl)}" class="thread-avatar" alt="${authorName}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" loading="lazy" />
+      <span class="thread-author">${authorName}</span>
+      <span class="thread-snippet ${isDeleted ? 'thread-deleted' : ''}">${snippet}</span>
+    </div>
+  `;
+}
+
+/**
+ * Renders a full Discord Rich Embed Card.
+ * @param {object} em 
+ */
+export function renderTranscriptEmbedCard(em) {
+  if (!em || typeof em !== 'object') return '';
+
+  // Color resolution: hex string or integer
+  let colorHex = '#202225';
+  const c = em.color ?? em.hexColor;
+  if (c != null) {
+    if (typeof c === 'number') {
+      if (c !== 0) colorHex = '#' + c.toString(16).padStart(6, '0');
+    } else if (typeof c === 'string') {
+      const clean = c.trim().replace(/^#/, '');
+      if (/^[0-9a-fA-F]{3,8}$/.test(clean)) {
+        colorHex = '#' + clean;
+      }
+    }
+  }
+
+  let html = `<div class="discord-embed-card" style="border-left: 4px solid ${escapeHtml(colorHex)};">`;
+
+  // Provider
+  if (em.provider && em.provider.name) {
+    html += `<div class="embed-provider">${escapeHtml(em.provider.name)}</div>`;
+  }
+
+  // Author
+  const authorName = em.author?.name || em.authorName;
+  const authorUrl = em.author?.url || em.authorUrl;
+  const authorIcon = em.author?.icon_url || em.author?.iconUrl || em.authorIcon;
+  if (authorName) {
+    html += `
+      <div class="embed-author">
+        ${authorIcon ? `<img src="${escapeHtml(authorIcon)}" class="embed-author-icon" onerror="this.style.display='none'" />` : ''}
+        ${authorUrl ? `<a href="${escapeHtml(authorUrl)}" target="_blank" rel="noopener noreferrer" class="embed-author-link">${escapeHtml(authorName)}</a>` : `<span>${escapeHtml(authorName)}</span>`}
+      </div>
+    `;
+  }
+
+  // Grid with Main Col and Upper-Right Thumbnail
+  const thumbUrl = em.thumbnail?.url || em.thumbnailUrl;
+  html += `<div class="embed-grid">`;
+  html += `<div class="embed-main-col">`;
+
+  // Title
+  if (em.title) {
+    if (em.url) {
+      html += `<a href="${escapeHtml(em.url)}" target="_blank" rel="noopener noreferrer" class="embed-title">${escapeHtml(em.title)}</a>`;
+    } else {
+      html += `<div class="embed-title" style="color: #F2F3F5;">${escapeHtml(em.title)}</div>`;
+    }
+  }
+
+  // Description
+  if (em.description) {
+    html += `<div class="embed-description">${formatDiscordMarkdown(em.description)}</div>`;
+  }
+
+  html += `</div>`; // end embed-main-col
+
+  // Thumbnail (Upper Right)
+  if (thumbUrl) {
+    html += `
+      <div class="embed-thumb-col">
+        <a href="${escapeHtml(thumbUrl)}" target="_blank" rel="noopener noreferrer">
+          <img src="${escapeHtml(thumbUrl)}" class="embed-thumb-img" onerror="this.parentElement.style.display='none'" loading="lazy" />
+        </a>
+      </div>
+    `;
+  }
+  html += `</div>`; // end embed-grid
+
+  // Fields Grid
+  if (Array.isArray(em.fields) && em.fields.length > 0) {
+    const validFields = em.fields.filter(f => f && (f.name || f.value));
+    if (validFields.length > 0) {
+      html += `<div class="embed-fields-grid">`;
+      for (const f of validFields) {
+        html += `
+          <div class="embed-field ${f.inline ? 'inline' : 'block'}">
+            <div class="embed-field-name">${formatDiscordMarkdown(f.name || '')}</div>
+            <div class="embed-field-value">${formatDiscordMarkdown(f.value || '')}</div>
+          </div>
+        `;
+      }
+      html += `</div>`;
+    }
+  }
+
+  // Large Image
+  const imgUrl = em.image?.url || em.imageUrl;
+  if (imgUrl) {
+    html += `
+      <div class="embed-image-wrap">
+        <a href="${escapeHtml(imgUrl)}" target="_blank" rel="noopener noreferrer">
+          <img src="${escapeHtml(imgUrl)}" class="embed-image-img" onerror="this.parentElement.style.display='none'" loading="lazy" />
+        </a>
+      </div>
+    `;
+  }
+
+  // Footer & Timestamp
+  const footerText = em.footer?.text || em.footerText;
+  const footerIcon = em.footer?.icon_url || em.footer?.iconUrl || em.footerIcon;
+  const timestamp = em.timestamp;
+  if (footerText || timestamp) {
+    let tsLabel = '';
+    if (timestamp) {
+      try {
+        tsLabel = new Date(timestamp).toLocaleString();
+      } catch {}
+    }
+    html += `
+      <div class="embed-footer">
+        ${footerIcon ? `<img src="${escapeHtml(footerIcon)}" class="embed-footer-icon" onerror="this.style.display='none'" />` : ''}
+        <span>${escapeHtml(footerText || '')}${footerText && tsLabel ? ' • ' : ''}${escapeHtml(tsLabel)}</span>
+      </div>
+    `;
+  }
+
+  html += `</div>`;
+  return html;
 }
 
 /**
@@ -1289,6 +1515,14 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
       embeds = typeof msg.embeds_json === 'string' ? JSON.parse(msg.embeds_json) : (msg.embeds_json || []);
     } catch {}
 
+    let reply = msg.reply_to || null;
+    if (!reply && msg.reply_to_json) {
+      try {
+        reply = typeof msg.reply_to_json === 'string' ? JSON.parse(msg.reply_to_json) : msg.reply_to_json;
+      } catch {}
+    }
+
+    const replyLeadHtml = reply ? renderTranscriptReplyLead(reply) : '';
     const formattedContent = formatDiscordMarkdown(msg.content);
     const timeFormatted = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const fullDate = new Date(msg.created_at).toLocaleString();
@@ -1299,7 +1533,7 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
       if (isImg) {
         return `
           <div class="attachment-image">
-            <a href="${escapeHtml(att.url)}" target="_blank" rel="noopener">
+            <a href="${escapeHtml(att.url)}" target="_blank" rel="noopener noreferrer">
               <img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.filename)}" loading="lazy" />
             </a>
           </div>
@@ -1308,35 +1542,14 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
       return `
         <div class="attachment-file">
           <span class="file-icon">📎</span>
-          <a href="${escapeHtml(att.url)}" target="_blank" rel="noopener" class="file-name">${escapeHtml(att.filename)}</a>
+          <a href="${escapeHtml(att.url)}" target="_blank" rel="noopener noreferrer" class="file-name">${escapeHtml(att.filename)}</a>
           <span class="file-size">(${(att.size / 1024).toFixed(1)} KB)</span>
         </div>
       `;
     }).join('');
 
     // Embeds HTML
-    const embedsHtml = embeds.map(emb => {
-      const colorStyle = emb.color ? `border-left-color: ${escapeHtml(emb.color)};` : '';
-      return `
-        <div class="discord-embed" style="${colorStyle}">
-          ${emb.author?.name ? `<div class="embed-author">${escapeHtml(emb.author.name)}</div>` : ''}
-          ${emb.title ? `<div class="embed-title">${emb.url ? `<a href="${escapeHtml(emb.url)}" target="_blank">${escapeHtml(emb.title)}</a>` : escapeHtml(emb.title)}</div>` : ''}
-          ${emb.description ? `<div class="embed-description">${formatDiscordMarkdown(emb.description)}</div>` : ''}
-          ${emb.fields && emb.fields.length > 0 ? `
-            <div class="embed-fields">
-              ${emb.fields.map(f => `
-                <div class="embed-field ${f.inline ? 'inline' : ''}">
-                  <div class="field-name">${escapeHtml(f.name)}</div>
-                  <div class="field-value">${formatDiscordMarkdown(f.value)}</div>
-                </div>
-              `).join('')}
-            </div>
-          ` : ''}
-          ${emb.image?.url ? `<div class="embed-image"><img src="${escapeHtml(emb.image.url)}" loading="lazy" /></div>` : ''}
-          ${emb.footer?.text ? `<div class="embed-footer">${escapeHtml(emb.footer.text)}</div>` : ''}
-        </div>
-      `;
-    }).join('');
+    const embedsHtml = embeds.map(emb => renderTranscriptEmbedCard(emb)).join('');
 
     let avatarUrl = msg.author_avatar;
     if (!avatarUrl && msg.author_id) {
@@ -1349,19 +1562,22 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
     }
 
     return `
-      <div class="chat-message" id="msg-${msg.message_id}">
-        <div class="avatar-col">
-          <img class="avatar" src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(msg.author_display_name)}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
-        </div>
-        <div class="content-col">
-          <div class="message-header">
-            <span class="author-name">${escapeHtml(msg.author_display_name)}</span>
-            <span class="author-tag">@${escapeHtml(msg.author_username)}</span>
-            <time class="message-time" title="${escapeHtml(fullDate)}">${escapeHtml(timeFormatted)}</time>
+      <div class="chat-message" id="msg-${msg.message_id}" data-msgid="${msg.message_id}">
+        ${replyLeadHtml}
+        <div class="chat-message-main">
+          <div class="avatar-col">
+            <img class="avatar" src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(msg.author_display_name)}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
           </div>
-          ${formattedContent ? `<div class="message-body">${formattedContent}</div>` : ''}
-          ${attachmentsHtml ? `<div class="attachments-wrap">${attachmentsHtml}</div>` : ''}
-          ${embedsHtml ? `<div class="embeds-wrap">${embedsHtml}</div>` : ''}
+          <div class="content-col">
+            <div class="message-header">
+              <span class="author-name">${escapeHtml(msg.author_display_name)}</span>
+              <span class="author-tag">@${escapeHtml(msg.author_username)}</span>
+              <time class="message-time" title="${escapeHtml(fullDate)}">${escapeHtml(timeFormatted)}</time>
+            </div>
+            ${formattedContent ? `<div class="message-body">${formattedContent}</div>` : ''}
+            ${attachmentsHtml ? `<div class="attachments-wrap">${attachmentsHtml}</div>` : ''}
+            ${embedsHtml ? `<div class="embeds-wrap">${embedsHtml}</div>` : ''}
+          </div>
         </div>
       </div>
     `;
@@ -1536,7 +1752,7 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
     /* Message Item */
     .chat-message {
       display: flex;
-      gap: 16px;
+      flex-direction: column;
       padding: 6px 12px;
       margin: 2px 0;
       border-radius: 6px;
@@ -1544,6 +1760,10 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
     }
     .chat-message:hover {
       background-color: var(--bg-hover);
+    }
+    .chat-message-main {
+      display: flex;
+      gap: 16px;
     }
 
     .avatar-col {
@@ -1590,8 +1810,63 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
       line-height: 1.45;
     }
 
-    /* Markdown Elements */
-    .inline-code {
+    /* Thread Lead / Reply Spine */
+    .discord-thread-lead {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 54px;
+      margin-bottom: 4px;
+      font-size: 12px;
+      line-height: 1.3;
+      color: #B5BAC1;
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+    }
+    .discord-thread-lead:hover .thread-snippet {
+      text-decoration: underline;
+    }
+    .discord-thread-lead:hover .thread-author {
+      color: #FFFFFF;
+    }
+    .thread-spine {
+      position: absolute;
+      left: -34px;
+      top: 8px;
+      width: 28px;
+      height: 12px;
+      border-left: 2px solid #4E5058;
+      border-top: 2px solid #4E5058;
+      border-top-left-radius: 6px;
+      pointer-events: none;
+    }
+    .thread-avatar {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .thread-author {
+      font-weight: 700;
+      color: #7289da;
+      flex-shrink: 0;
+    }
+    .thread-snippet {
+      color: #B5BAC1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 520px;
+    }
+    .thread-deleted {
+      color: #949BA4;
+      font-style: italic;
+    }
+
+    /* Discord Markdown Elements */
+    .discord-inline-code {
       background-color: var(--bg-darkest);
       font-family: var(--font-mono);
       font-size: 85%;
@@ -1599,7 +1874,7 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
       border-radius: 4px;
       color: #e3e5e8;
     }
-    .code-block {
+    .discord-code-block {
       background-color: var(--bg-darkest);
       border: 1px solid var(--border-color);
       border-radius: 6px;
@@ -1610,20 +1885,66 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
       overflow-x: auto;
       color: #e3e5e8;
     }
-    .quote-block {
+    .discord-blockquote {
       border-left: 4px solid var(--border-color);
       padding-left: 12px;
       margin: 6px 0;
       color: var(--text-muted);
-      font-style: italic;
     }
-    .mention {
+    .discord-mention {
       background-color: var(--mention-bg);
       color: var(--mention-text);
       font-weight: 500;
-      padding: 1px 4px;
+      padding: 1px 5px;
       border-radius: 4px;
+      cursor: pointer;
+      display: inline-block;
+      line-height: 1.35;
+      transition: background 0.15s, color 0.15s;
     }
+    .discord-mention:hover {
+      background-color: var(--brand);
+      color: #fff;
+    }
+    .discord-custom-emoji {
+      width: 22px;
+      height: 22px;
+      vertical-align: -4px;
+      object-fit: contain;
+      display: inline-block;
+      margin: 0 1px;
+    }
+    .discord-spoiler {
+      background: #202225;
+      color: transparent;
+      border-radius: 3px;
+      padding: 0 4px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s ease, color 0.15s ease;
+      display: inline-block;
+    }
+    .discord-spoiler:hover { background: #2B2D31; }
+    .discord-spoiler.revealed {
+      background: rgba(255, 255, 255, 0.08);
+      color: #DBDEE1;
+      user-select: text;
+    }
+    .discord-subtext {
+      font-size: 11px;
+      color: #949BA4;
+      line-height: 1.35;
+      display: block;
+      margin: 2px 0;
+    }
+    .discord-timestamp-tag {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #DBDEE1;
+    }
+
     a {
       color: #00a8fc;
       text-decoration: none;
@@ -1657,34 +1978,159 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
     .file-name { font-weight: 600; }
     .file-size { color: var(--text-muted); font-size: 12px; }
 
-    /* Embeds */
+    /* Discord Embeds */
     .embeds-wrap {
       margin-top: 8px;
       display: flex;
       flex-direction: column;
       gap: 8px;
     }
-    .discord-embed {
+    .discord-embed-card {
       background-color: var(--embed-bg);
       border-left: 4px solid var(--brand);
       border-radius: 4px;
       padding: 12px 16px;
       max-width: 520px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-    }
-    .embed-author { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
-    .embed-title { font-size: 15px; font-weight: 700; color: var(--text-header); margin-bottom: 6px; }
-    .embed-description { font-size: 13px; color: var(--text-normal); margin-bottom: 8px; }
-    .embed-fields {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+      display: flex;
+      flex-direction: column;
       gap: 8px;
-      margin-top: 8px;
+      box-sizing: border-box;
     }
-    .field-name { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 2px; }
-    .field-value { font-size: 13px; color: var(--text-normal); }
-    .embed-image img { max-width: 100%; max-height: 300px; border-radius: 4px; margin-top: 8px; }
-    .embed-footer { font-size: 11px; color: var(--text-muted); margin-top: 8px; border-top: 1px solid var(--border-color); padding-top: 4px; }
+    .embed-provider {
+      font-size: 11px;
+      font-weight: 500;
+      color: #949BA4;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: -2px;
+    }
+    .embed-author {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #F2F3F5;
+    }
+    .embed-author-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .embed-author-link {
+      color: #F2F3F5;
+      text-decoration: none;
+    }
+    .embed-author-link:hover { text-decoration: underline; }
+    .embed-grid {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .embed-main-col {
+      flex: 1;
+      min-width: 0;
+    }
+    .embed-thumb-col {
+      flex-shrink: 0;
+    }
+    .embed-thumb-img {
+      max-width: 80px;
+      max-height: 80px;
+      border-radius: 4px;
+      object-fit: contain;
+      display: block;
+    }
+    .embed-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #00A8FC;
+      line-height: 1.35;
+      margin-bottom: 4px;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .embed-title:hover { text-decoration: underline; }
+    .embed-description {
+      font-size: 13px;
+      line-height: 1.45;
+      color: #DBDEE1;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .embed-fields-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px 12px;
+      margin-top: 4px;
+    }
+    .embed-field.inline {
+      grid-column: span 1;
+      min-width: 0;
+    }
+    .embed-field.block {
+      grid-column: 1 / -1;
+    }
+    @media (max-width: 600px) {
+      .embed-fields-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .embed-field-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: #F2F3F5;
+      margin-bottom: 2px;
+      word-break: break-word;
+    }
+    .embed-field-value {
+      font-size: 13px;
+      color: #DBDEE1;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .embed-image-wrap {
+      margin-top: 6px;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .embed-image-img {
+      max-width: 100%;
+      max-height: 360px;
+      border-radius: 4px;
+      object-fit: contain;
+      display: block;
+      cursor: pointer;
+    }
+    .embed-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: #949BA4;
+      margin-top: 6px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding-top: 6px;
+    }
+    .embed-footer-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    /* Jump Flash Highlight */
+    .msg-highlight-flash {
+      animation: flashMsg 1.6s ease-out;
+    }
+    @keyframes flashMsg {
+      0% { background-color: rgba(88, 101, 242, 0.35); }
+      100% { background-color: transparent; }
+    }
 
     /* Footer */
     .transcript-footer {
@@ -1768,6 +2214,19 @@ export function renderTranscriptHtml(transcript, messages, baseUrl = '') {
       t.textContent = msg;
       t.style.display = 'block';
       setTimeout(() => { t.style.display = 'none'; }, 3000);
+    }
+
+    function jumpToTranscriptMessage(msgId) {
+      if (!msgId) return;
+      const target = document.getElementById('msg-' + msgId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.remove('msg-highlight-flash');
+        void target.offsetWidth;
+        target.classList.add('msg-highlight-flash');
+      } else {
+        showToast('Referenced message is not in this transcript view');
+      }
     }
 
     function filterMessages(query) {
@@ -2467,6 +2926,16 @@ export function renderTranscriptsListHtml(transcripts = [], baseUrl = '') {
     /* Modal Message items */
     .m-msg-item {
       display: flex;
+      flex-direction: column;
+      padding: 6px 8px;
+      border-radius: 6px;
+      transition: background-color 0.1s ease;
+    }
+    .m-msg-item:hover {
+      background-color: rgba(255, 255, 255, 0.04);
+    }
+    .m-msg-row {
+      display: flex;
       gap: 14px;
     }
     .m-msg-avatar {
@@ -2475,7 +2944,7 @@ export function renderTranscriptsListHtml(transcripts = [], baseUrl = '') {
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .m-msg-body { flex: 1; }
+    .m-msg-body { flex: 1; min-width: 0; }
     .m-msg-header {
       display: flex;
       align-items: baseline;
@@ -2484,7 +2953,255 @@ export function renderTranscriptsListHtml(transcripts = [], baseUrl = '') {
     }
     .m-msg-author { font-weight: 600; color: #fff; font-size: 14px; }
     .m-msg-ts { font-size: 11px; color: #949ba4; }
-    .m-msg-content { color: #dbdee1; font-size: 14px; word-break: break-word; }
+    .m-msg-content { color: #dbdee1; font-size: 14px; word-break: break-word; line-height: 1.45; }
+
+    /* Modal Thread Lead / Reply Spine */
+    .discord-thread-lead {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 54px;
+      margin-bottom: 4px;
+      font-size: 12px;
+      line-height: 1.3;
+      color: #B5BAC1;
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+    }
+    .discord-thread-lead:hover .thread-snippet { text-decoration: underline; }
+    .discord-thread-lead:hover .thread-author { color: #FFFFFF; }
+    .thread-spine {
+      position: absolute;
+      left: -34px;
+      top: 8px;
+      width: 28px;
+      height: 12px;
+      border-left: 2px solid #4E5058;
+      border-top: 2px solid #4E5058;
+      border-top-left-radius: 6px;
+      pointer-events: none;
+    }
+    .thread-avatar {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .thread-author {
+      font-weight: 700;
+      color: #7289da;
+      flex-shrink: 0;
+    }
+    .thread-snippet {
+      color: #B5BAC1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 520px;
+    }
+    .thread-deleted { color: #949BA4; font-style: italic; }
+
+    /* Modal Markdown & Emojis */
+    .discord-inline-code {
+      background-color: #1e1f22;
+      font-family: Consolas, monospace;
+      font-size: 85%;
+      padding: 2px 5px;
+      border-radius: 4px;
+      color: #e3e5e8;
+    }
+    .discord-code-block {
+      background-color: #1e1f22;
+      border: 1px solid #3f4147;
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin: 6px 0;
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      color: #e3e5e8;
+    }
+    .discord-blockquote {
+      border-left: 4px solid #4e5058;
+      padding-left: 10px;
+      margin: 4px 0;
+      color: #949ba4;
+    }
+    .discord-mention {
+      background-color: rgba(88, 101, 242, 0.2);
+      color: #c9cdfb;
+      font-weight: 500;
+      padding: 1px 5px;
+      border-radius: 4px;
+      display: inline-block;
+      line-height: 1.35;
+    }
+    .discord-mention:hover { background-color: #5865f2; color: #fff; }
+    .discord-custom-emoji {
+      width: 22px;
+      height: 22px;
+      vertical-align: -4px;
+      object-fit: contain;
+      display: inline-block;
+      margin: 0 1px;
+    }
+    .discord-spoiler {
+      background: #202225;
+      color: transparent;
+      border-radius: 3px;
+      padding: 0 4px;
+      cursor: pointer;
+      user-select: none;
+      display: inline-block;
+    }
+    .discord-spoiler.revealed { background: rgba(255, 255, 255, 0.08); color: #dbdee1; user-select: text; }
+    .discord-subtext {
+      font-size: 11px;
+      color: #949ba4;
+      line-height: 1.35;
+      display: block;
+      margin: 2px 0;
+    }
+    .discord-timestamp-tag {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #dbdee1;
+    }
+
+    /* Modal Embeds */
+    .discord-embed-card {
+      background-color: #2b2d31;
+      border-left: 4px solid #5865f2;
+      border-radius: 4px;
+      padding: 10px 14px;
+      max-width: 520px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-sizing: border-box;
+      margin-top: 6px;
+    }
+    .embed-provider {
+      font-size: 10px;
+      font-weight: 500;
+      color: #949ba4;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .embed-author {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #f2f3f5;
+    }
+    .embed-author-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .embed-author-link { color: #f2f3f5; text-decoration: none; }
+    .embed-author-link:hover { text-decoration: underline; }
+    .embed-grid {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .embed-main-col { flex: 1; min-width: 0; }
+    .embed-thumb-col { flex-shrink: 0; }
+    .embed-thumb-img {
+      max-width: 72px;
+      max-height: 72px;
+      border-radius: 4px;
+      object-fit: contain;
+      display: block;
+    }
+    .embed-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #00a8fc;
+      line-height: 1.35;
+      margin-bottom: 2px;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .embed-title:hover { text-decoration: underline; }
+    .embed-description {
+      font-size: 13px;
+      line-height: 1.45;
+      color: #dbdee1;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .embed-fields-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px 10px;
+      margin-top: 4px;
+    }
+    .embed-field.inline { grid-column: span 1; min-width: 0; }
+    .embed-field.block { grid-column: 1 / -1; }
+    @media (max-width: 600px) {
+      .embed-fields-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .embed-field-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: #f2f3f5;
+      margin-bottom: 2px;
+      word-break: break-word;
+    }
+    .embed-field-value {
+      font-size: 12px;
+      color: #dbdee1;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .embed-image-wrap { margin-top: 6px; border-radius: 4px; overflow: hidden; }
+    .embed-image-img {
+      max-width: 100%;
+      max-height: 300px;
+      border-radius: 4px;
+      object-fit: contain;
+      display: block;
+      cursor: pointer;
+    }
+    .embed-footer {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #949ba4;
+      margin-top: 4px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding-top: 4px;
+    }
+    .embed-footer-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    /* Modal Jump Flash Highlight */
+    .msg-highlight-flash {
+      animation: modalFlashMsg 1.6s ease-out;
+    }
+    @keyframes modalFlashMsg {
+      0% { background-color: rgba(88, 101, 242, 0.35); }
+      100% { background-color: transparent; }
+    }
 
     /* Toast */
     .toast {
@@ -2663,6 +3380,28 @@ export function renderTranscriptsListHtml(transcripts = [], baseUrl = '') {
       await loadModalContent(transcriptId);
     }
 
+    ${escapeHtml.toString()}
+    ${formatDiscordMarkdown.toString()}
+    ${renderTranscriptReplyLead.toString()}
+    ${renderTranscriptEmbedCard.toString()}
+
+    function jumpToTranscriptMessage(msgId) {
+      jumpToModalMessage(msgId);
+    }
+
+    function jumpToModalMessage(msgId) {
+      if (!msgId) return;
+      var target = document.getElementById('modal-msg-' + msgId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.remove('msg-highlight-flash');
+        void target.offsetWidth;
+        target.classList.add('msg-highlight-flash');
+      } else {
+        showToast('Referenced message is not in this transcript view');
+      }
+    }
+
     async function loadModalContent(transcriptId) {
       activeTranscriptId = transcriptId;
       const bodyEl = document.getElementById('modal-messages-body');
@@ -2693,17 +3432,62 @@ export function renderTranscriptsListHtml(transcripts = [], baseUrl = '') {
           const avatar = m.author_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
           const author = escapeHtml(m.author_display_name || m.author_username || 'User');
           const time = m.created_at ? new Date(m.created_at).toLocaleString() : '';
-          const text = escapeHtml(m.content || '');
+          
+          let attachments = [];
+          try {
+            attachments = typeof m.attachments_json === 'string' ? JSON.parse(m.attachments_json) : (m.attachments_json || []);
+          } catch(e) {}
+
+          let embeds = [];
+          try {
+            embeds = typeof m.embeds_json === 'string' ? JSON.parse(m.embeds_json) : (m.embeds_json || []);
+          } catch(e) {}
+
+          let reply = m.reply_to || null;
+          if (!reply && m.reply_to_json) {
+            try {
+              reply = typeof m.reply_to_json === 'string' ? JSON.parse(m.reply_to_json) : m.reply_to_json;
+            } catch(e) {}
+          }
+
+          const replyLeadHtml = reply ? renderTranscriptReplyLead(reply) : '';
+          const formattedContent = formatDiscordMarkdown(m.content || '');
+
+          const attachmentsHtml = attachments.map(att => {
+            const isImg = att.content_type?.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(att.filename);
+            if (isImg) {
+              return \`
+                <div class="attachment-image" style="margin-top: 6px;">
+                  <a href="\${escapeHtml(att.url)}" target="_blank" rel="noopener noreferrer">
+                    <img src="\${escapeHtml(att.url)}" alt="\${escapeHtml(att.filename)}" style="max-width: 100%; max-height: 240px; border-radius: 6px;" loading="lazy" />
+                  </a>
+                </div>
+              \`;
+            }
+            return \`
+              <div class="attachment-file" style="margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.25); padding: 5px 10px; border-radius: 4px; font-size: 12px;">
+                <span>📎</span>
+                <a href="\${escapeHtml(att.url)}" target="_blank" rel="noopener noreferrer" style="color: #00A8FC;">\${escapeHtml(att.filename)}</a>
+              </div>
+            \`;
+          }).join('');
+
+          const embedsHtml = embeds.map(em => renderTranscriptEmbedCard(em)).join('');
 
           return \`
-            <div class="m-msg-item">
-              <img src="\${avatar}" class="m-msg-avatar" alt="\${author}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
-              <div class="m-msg-body">
-                <div class="m-msg-header">
-                  <span class="m-msg-author">\${author}</span>
-                  <span class="m-msg-ts">\${time}</span>
+            <div class="m-msg-item" id="modal-msg-\${m.message_id}">
+              \${replyLeadHtml}
+              <div class="m-msg-row">
+                <img src="\${avatar}" class="m-msg-avatar" alt="\${author}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+                <div class="m-msg-body">
+                  <div class="m-msg-header">
+                    <span class="m-msg-author">\${author}</span>
+                    <span class="m-msg-ts">\${time}</span>
+                  </div>
+                  \${formattedContent ? \`<div class="m-msg-content">\${formattedContent}</div>\` : ''}
+                  \${attachmentsHtml ? \`<div class="attachments-wrap">\${attachmentsHtml}</div>\` : ''}
+                  \${embedsHtml ? \`<div class="embeds-wrap" style="margin-top: 6px; display: flex; flex-direction: column; gap: 6px;">\${embedsHtml}</div>\` : ''}
                 </div>
-                <div class="m-msg-content">\${text || '<span style="color: #71dbf8; font-style: italic;">[Attachments or Embeds only]</span>'}</div>
               </div>
             </div>
           \`;
