@@ -163,6 +163,13 @@ await env.DB.prepare(`
 export default {
   async fetch(req, env, ctx) {
     try {
+      // Secret values can carry a UTF-8 BOM or stray whitespace (e.g. pasted
+      // from a file). Discord rejects such an Authorization header with 401,
+      // so strip it once here for every downstream Discord call.
+      if (typeof env.DISCORD_BOT_TOKEN === 'string') {
+        env = { ...env, DISCORD_BOT_TOKEN: env.DISCORD_BOT_TOKEN.trim() };
+      }
+
       const url = new URL(req.url);
 
       const sentinelDb = env.TRANSCRIPTS_DB || env.DB;
@@ -1475,6 +1482,11 @@ if (name === "event-status") {
    * Runs Sentinel channel polling & Event Bot transcripts polling
    */
   async scheduled(event, env, ctx) {
+    // See fetch(): normalise the bot token before any Discord call uses it.
+    if (typeof env.DISCORD_BOT_TOKEN === 'string') {
+      env = { ...env, DISCORD_BOT_TOKEN: env.DISCORD_BOT_TOKEN.trim() };
+    }
+
     const sentinelDb = env.TRANSCRIPTS_DB || env.DB;
     const sentinelEnv = {
       ...env,

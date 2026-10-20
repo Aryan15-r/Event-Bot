@@ -2409,10 +2409,12 @@
   const allMessagesMap = new Map();
 
   /**
-   * Starts the 12-second Dictionary auto-sync timer.
+   * Starts the Dictionary auto-sync timer.
    * Covers both the channel chat (live message refresh) and the list views
    * (server/channel folder refresh). Safe to call repeatedly: the previous
    * timer is always cleared first.
+   * The interval is deliberately 30s — every tick issues several D1 reads and
+   * a 12s cadence pushed the database towards its daily query limit.
    */
   function setupDictionaryAutoSync() {
     clearInterval(state.dictionary.syncTimer);
@@ -2449,7 +2451,7 @@
           }
         } catch {}
       }
-    }, 12000);
+    }, 30000);
   }
 
   // Helper: Live Sync Channel Messages
@@ -2672,6 +2674,12 @@
           inputEl.value = '';
           state.dictionary.replyTo = null;
           showToast('Message sent', 'success');
+          // Pull the new message back from Discord so it appears immediately
+          // instead of waiting for the next poll or a manual sync.
+          await api('/api/monitoring/poll-now', {
+            method: 'POST',
+            body: { channel_id: targetChannelId }
+          }).catch(() => {});
           await syncChannelMessages(true, allMessagesMap);
           renderDictionaryChat(state.dictionary._container, state.dictionary._mainContainer);
         } catch (err) {

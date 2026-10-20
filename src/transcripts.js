@@ -217,7 +217,9 @@ export async function fetchDiscordMessages(botToken, channelId, options = {}) {
   const res = await fetch(url, {
     method: 'GET',
     headers: {
-      Authorization: `Bot ${botToken}`,
+      // Secret values can carry a UTF-8 BOM or stray whitespace; Discord
+      // rejects the header with 401 if they are not stripped.
+      Authorization: `Bot ${String(botToken || '').trim()}`,
       'User-Agent': 'DiscordBot (DiscordEventBot-Transcript, 1.0.0)',
       Accept: 'application/json'
     }
@@ -249,7 +251,7 @@ export async function fetchDiscordChannel(botToken, channelId) {
   const res = await fetch(url, {
     method: 'GET',
     headers: {
-      Authorization: `Bot ${botToken}`,
+      Authorization: `Bot ${String(botToken || '').trim()}`,
       'User-Agent': 'DiscordBot (DiscordEventBot-Transcript, 1.0.0)',
       Accept: 'application/json'
     }
@@ -824,7 +826,6 @@ export async function pushBackupToGitHub(metadata, contentTxt, env) {
  * @returns {Promise<{ ok: boolean, backupId: string, checksum: string, status: string, githubCommitSha?: string }>}
  */
 export async function createVerifiedBackup(db, transcript, messages, env = {}) {
-  const backupId = `bk_${transcript.id || Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
   const now = new Date().toISOString();
 
   // 1. Generate canonical content
@@ -853,7 +854,12 @@ export async function createVerifiedBackup(db, transcript, messages, env = {}) {
     }
   }
 
-  // 4. Save to D1 transcript_backups table with BACKUP_VERIFIED
+  // 4. Save to D1 transcript_backups table with BACKUP_VERIFIED.
+  // The id MUST be deterministic: a random suffix meant ON CONFLICT never
+  // matched, so every poll inserted a fresh copy of the same backup and
+  // burned the D1 row-write quota.
+  const backupId = transcript.id ? `bk_${transcript.id}` : `bk_c_${checksum.slice(0, 24)}`;
+
   await db.prepare(`
     INSERT INTO transcript_backups (
       id, transcript_id, guild_id, channel_id, channel_name, guild_name,
@@ -863,7 +869,11 @@ export async function createVerifiedBackup(db, transcript, messages, env = {}) {
     VALUES (?, ?, ?, ?, ?, ?, 'BACKUP_VERIFIED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       status = 'BACKUP_VERIFIED',
+      message_count = excluded.message_count,
+      content_txt = excluded.content_txt,
+      content_json = excluded.content_json,
       checksum = excluded.checksum,
+      backup_size = excluded.backup_size,
       verified_at = excluded.verified_at,
       github_commit_sha = excluded.github_commit_sha
   `).bind(
@@ -1002,6 +1012,37 @@ export async function safePruneWithBackup(db, retentionHours = 48, env = {}) {
       (questionsAndHelp.length > 0 ? `Key questions/topics: ${questionsAndHelp.join('; ')}` : 'No urgent issues reported.');
 
     const now = new Date().toISOString();
+
+    // CRITICAL: Generate VERIFIED BACKUP before deleting original messages
+    const pseudoTranscript = {
+      id: `auto_${group.channel_id}_${group.msg_date}`,
+      transcript_id: `auto_${group.channel_id}_${group.msg_date}`,
+      channel_id: group.channel_id,
+      channel_name: group.channel_name || 'channel',
+      guild_id: group.guild_id || '',
+      guild_name: group.guild_name || 'Discord Server',
+      message_count: msgs.length,
+      created_at: msgs[0].created_at || now,
+      expires_at: cutoffIso,
+      backup_status: 'BACKUP_VERIFIED'
+    };
+
+    // Skip the writes entirely when a verified backup of the same size already
+    // exists — otherwise every poll re-writes the same summary + multi-KB blob.
+    const existingBackup = await db.prepare(
+      'SELECT id, message_count, status FROM transcript_backups WHERE transcript_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).bind(pseudoTranscript.transcript_id).first().catch(() => null);
+
+    const alreadyBackedUp = existingBackup
+      && existingBackup.status === 'BACKUP_VERIFIED'
+      && existingBackup.message_count === msgs.length;
+
+    if (alreadyBackedUp) {
+      backupsCreated++;
+      verifiedDeletions.push({ channel_id: group.channel_id, dateStart, dateEnd });
+      continue;
+    }
+
     try {
       await db.prepare(`
         INSERT INTO channel_summaries (
@@ -1025,20 +1066,6 @@ export async function safePruneWithBackup(db, retentionHours = 48, env = {}) {
       ).run();
       summariesCreated++;
     } catch {}
-
-    // CRITICAL: Generate VERIFIED BACKUP before deleting original messages
-    const pseudoTranscript = {
-      id: `auto_${group.channel_id}_${group.msg_date}`,
-      transcript_id: `auto_${group.channel_id}_${group.msg_date}`,
-      channel_id: group.channel_id,
-      channel_name: group.channel_name || 'channel',
-      guild_id: group.guild_id || '',
-      guild_name: group.guild_name || 'Discord Server',
-      message_count: msgs.length,
-      created_at: msgs[0].created_at || now,
-      expires_at: cutoffIso,
-      backup_status: 'BACKUP_VERIFIED'
-    };
 
     try {
       const backupResult = await createVerifiedBackup(db, pseudoTranscript, msgs, env);
@@ -1164,6 +1191,23 @@ export async function runScheduledTranscriptPoll(db, env) {
   let { results: channels } = await db.prepare(
     'SELECT * FROM monitored_channels WHERE is_monitored = 1'
   ).all();
+
+  // The Sentinel `channels` table holds the channels the user actually enabled
+  // for monitoring. monitored_channels only holds the transcript engine's own
+  // cursor state, so merge the two instead of polling an unrelated channel.
+  let { results: sentinelChannels } = await db.prepare(
+    'SELECT channel_id, guild_id, name FROM channels WHERE is_monitored = 1'
+  ).all().catch(() => ({ results: [] }));
+
+  if (sentinelChannels && sentinelChannels.length > 0) {
+    const cursorByChannel = new Map((channels || []).map(c => [c.channel_id, c.last_message_id]));
+    channels = sentinelChannels.map(c => ({
+      channel_id: c.channel_id,
+      guild_id: c.guild_id || 'auto',
+      name: c.name || 'monitored',
+      last_message_id: cursorByChannel.get(c.channel_id) || null
+    }));
+  }
 
   if (!channels || channels.length === 0) {
     // Check if TARGET_CHANNEL_ID exists in env

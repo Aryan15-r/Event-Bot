@@ -193,10 +193,24 @@ CREATE INDEX IF NOT EXISTS idx_sent_alerts_sent_at ON sent_alerts(sent_at DESC);
 /**
  * Ensures that all database tables and indexes exist.
  * Safe to run multiple times (idempotent).
- * @param {D1Database} db 
+ * @param {D1Database} db
  */
 export async function ensureSchema(db) {
   if (!db) throw new Error('Database binding DB is missing');
+
+  // Fast path: one READ confirms the schema is already current.
+  // Running the DDL below on every cold start cost ~32 D1 write queries per
+  // isolate and was a major contributor to the rows-written quota.
+  const probe = await db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name = 'poll_limit') AS has_poll_limit,
+      (SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'reply_to_json') AS has_reply_to,
+      (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'transcripts') AS has_transcripts
+  `).first().catch(() => null);
+
+  if (probe && probe.has_poll_limit && probe.has_reply_to && probe.has_transcripts) {
+    return;
+  }
 
   // Column migrations run FIRST: existing databases were created before these
   // columns existed, and CREATE TABLE IF NOT EXISTS will never add them.

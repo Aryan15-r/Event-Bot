@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { pollChannel } from '../src/sentinel/services/polling.js';
 import { listAllChannels, updateChannelMonitoring } from '../src/sentinel/db/queries.js';
 
-test('pollChannel: forces initial backfill (limit 50, no after) when channel has 0 local messages', async () => {
+test('pollChannel: forces initial backfill (limit 50, no after) when channel has no cursor', async () => {
   const preparedCalls = [];
   const clientCalls = [];
 
@@ -51,9 +51,9 @@ test('pollChannel: forces initial backfill (limit 50, no after) when channel has
   const channel = {
     channel_id: 'ch_newly_added',
     guild_id: 'guild1',
-    // Stale cursor that might have existed in channels table:
-    last_message_id: '1599999999999999999',
-    cursor_message_id: '1599999999999999999'
+    // Never polled before: no cursor stored anywhere.
+    last_message_id: null,
+    cursor_message_id: null
   };
 
   const result = await pollChannel(mockDb, mockClient, channel);
@@ -64,6 +64,57 @@ test('pollChannel: forces initial backfill (limit 50, no after) when channel has
   // It must NOT query with `after`, but must query with initial backfill `limit: 50`
   assert.equal(clientCalls[0].options.after, undefined);
   assert.equal(clientCalls[0].options.limit, 50);
+});
+
+test('pollChannel: keeps using the cursor even when local messages were pruned', async () => {
+  const clientCalls = [];
+
+  const mockDb = {
+    prepare(sql) {
+      return {
+        bind(...args) {
+          return {
+            async first() {
+              if (sql.includes('SELECT message_id FROM messages WHERE channel_id = ? LIMIT 1')) {
+                return null; // messages were pruned by retention
+              }
+              return null;
+            },
+            async run() {
+              return { success: true };
+            },
+            async all() {
+              return { results: [] };
+            }
+          };
+        }
+      };
+    },
+    async batch() {
+      return [];
+    }
+  };
+
+  const mockClient = {
+    async getChannelMessages(channelId, options) {
+      clientCalls.push({ channelId, options });
+      return [];
+    }
+  };
+
+  const channel = {
+    channel_id: 'ch_pruned',
+    guild_id: 'guild1',
+    cursor_message_id: '1500000000000000001'
+  };
+
+  const result = await pollChannel(mockDb, mockClient, channel);
+
+  assert.equal(result.success, true);
+  assert.equal(clientCalls.length, 1);
+  // Must stay incremental — re-running a 50 message backfill every poll
+  // exhausted the D1 rows-written quota.
+  assert.equal(clientCalls[0].options.after, '1500000000000000001');
 });
 
 test('pollChannel: uses cursor with after when channel already has local messages in DB', async () => {

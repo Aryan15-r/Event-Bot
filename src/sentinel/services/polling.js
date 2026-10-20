@@ -148,14 +148,11 @@ export async function pollChannel(db, client, channel) {
   const channelId = channel.channel_id;
   const guildId = channel.guild_id;
 
-  // Determine if this channel has any existing messages stored in D1
-  const existingMsg = await db.prepare(
-    'SELECT message_id FROM messages WHERE channel_id = ? LIMIT 1'
-  ).bind(channelId).first();
-
-  // If there are NO messages stored locally for this channel, force initial backfill
-  // (cursor = null) so we fetch the latest batch of existing messages from Discord.
-  const cursor = existingMsg ? (channel.cursor_message_id || channel.last_message_id) : null;
+  // Use the stored cursor whenever we have one. The previous rule ("no local
+  // messages => force initial backfill") re-fetched up to 50 messages on every
+  // poll for channels whose messages had been pruned, which burned D1 writes.
+  // A cursor only exists once this channel has been polled successfully.
+  const cursor = channel.cursor_message_id || channel.last_message_id || null;
 
   let totalInserted = 0;
   let totalUpdated = 0;
