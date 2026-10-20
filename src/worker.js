@@ -1370,7 +1370,7 @@ if (name === "event-status") {
         if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
           await fetch(`https://discord.com/api/v10/webhooks/${env.DISCORD_CLIENT_ID}/${interaction.token}/messages/@original`, {
             method: 'PATCH',
-            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               content: `⚠️ No messages found to transcribe in <#${channelId}>.`
             })
@@ -1412,7 +1412,7 @@ if (name === "event-status") {
 
         await fetch(`https://discord.com/api/v10/webhooks/${env.DISCORD_CLIENT_ID}/${interaction.token}/messages/@original`, {
           method: 'PATCH',
-          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             content: `📄 **Transcript Generated Successfully!**\n- **Channel:** <#${channelId}> (\`#${channelName}\`)\n- **Messages Collected:** ${sorted.length}\n- **Requested By:** <@${userId}>\n- **Backup:** ${backupResult?.status === 'BACKUP_VERIFIED' ? '🛡️ Verified & Preserved' : '⏱️ Active (48h retention)'}\n\n🔗 **View Transcript:** ${transcriptUrl}\n📥 **Download backup.txt:** ${downloadTxtUrl}`
           })
@@ -1432,7 +1432,7 @@ if (name === "event-status") {
         console.error('🔥 /transcript error:', err);
         await fetch(`https://discord.com/api/v10/webhooks/${env.DISCORD_CLIENT_ID}/${interaction.token}/messages/@original`, {
           method: 'PATCH',
-          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             content: `❌ **Failed to generate transcript:** ${err.message}`
           })

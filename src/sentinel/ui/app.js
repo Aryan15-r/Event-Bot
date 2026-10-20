@@ -44,7 +44,8 @@
       serversList: [],
       allTranscripts: [],
       currentMessages: [],
-      loading: false
+      loading: false,
+      replyTo: null // {message_id, author, content, ...}
     },
     summaries: [],
     summaryTotal: 0,
@@ -898,6 +899,18 @@
                           <span style="color: var(--text-muted); font-weight: 700;">#</span>
                           <span>${escapeHtml(ch.name)}</span>
                         </div>
+                        <div style="margin-top: 4px; display: flex; align-items: center; gap: 6px;">
+                          <span style="font-size: 11px; color: var(--text-muted);">Poll limit:</span>
+                          <input 
+                            type="number" 
+                            min="10" 
+                            max="100" 
+                            class="channel-poll-limit-input" 
+                            data-channel="${ch.channel_id}"
+                            value="${ch.poll_limit !== undefined && ch.poll_limit !== null ? ch.poll_limit : 50}"
+                            style="width: 60px; padding: 2px 6px; font-size: 11px; background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px;"
+                          />
+                        </div>
                         <span class="channel-id-tag" onclick="window.copyTextToClipboard('${ch.channel_id}')" title="Click to copy Channel ID">
                           <code>${ch.channel_id}</code> 📋
                         </span>
@@ -1018,6 +1031,15 @@
       });
     });
 
+    card.querySelectorAll('.channel-poll-limit-input').forEach(input => {
+      input.addEventListener('change', () => {
+        updateUnsavedBanner();
+      });
+      input.addEventListener('input', () => {
+        updateUnsavedBanner();
+      });
+    });
+
     function updateChannelCounts() {
       let active = 0;
       card.querySelectorAll('.channel-toggle').forEach(inp => {
@@ -1071,6 +1093,25 @@
       for (const [channel_id, is_monitored] of state.channelChanges.entries()) {
         updates.push({ channel_id, is_monitored });
       }
+      // Also collect poll limit changes
+      card.querySelectorAll('.channel-poll-limit-input').forEach(input => {
+        const chId = input.getAttribute('data-channel');
+        const pollLimit = parseInt(input.value);
+        if (!isNaN(pollLimit) && pollLimit >= 10 && pollLimit <= 100) {
+          // Check if already in updates
+          const existing = updates.find(u => u.channel_id === chId);
+          if (existing) {
+            existing.poll_limit = pollLimit;
+          } else if (state.channelChanges.has(chId)) {
+            updates.push({ channel_id: chId, is_monitored: state.channelChanges.get(chId), poll_limit: pollLimit });
+          } else {
+            // Get current monitored state
+            const ch = state.channels.find(c => c.channel_id === chId);
+            const monitored = ch ? Boolean(ch.is_monitored) : true;
+            updates.push({ channel_id: chId, is_monitored: monitored, poll_limit: pollLimit });
+          }
+        }
+      });
 
       try {
         await api(`/api/servers/${state.selectedGuildId}/channels`, {
@@ -2355,6 +2396,66 @@
       if (state.currentTab === 'messages' && state.messagesSubTab === 'dictionary' && state.dictionary.level === 'chat' && state.dictionary.autoSync) {
         await syncChannelMessages(true, allMessagesMap);
       }
+      // Also auto-sync dictionary list views
+      if (state.currentTab === 'messages' && state.messagesSubTab === 'dictionary' && (state.dictionary.level === 'servers' || state.dictionary.level === 'channels') && state.dictionary.autoSync) {
+        try {
+          const [transcriptsRes, serversRes, channelsRes] = await Promise.all([
+            api('/api/transcripts').catch(() => ({ ok: true, transcripts: [] })),
+            api('/api/servers').catch(() => ({ ok: true, servers: [] })),
+            api('/api/channels?monitored_only=1').catch(() => ({ ok: true, channels: [] }))
+          ]);
+          state.dictionary.allTranscripts = transcriptsRes.transcripts || [];
+          const rawServers = serversRes.servers || [];
+          const rawChannels = channelsRes.channels || [];
+          const serverMap = new Map();
+          for (const srv of rawServers) {
+            serverMap.set(srv.guild_id, {
+              guild_id: srv.guild_id,
+              guild_name: srv.name || srv.guild_id,
+              channels: []
+            });
+          }
+          for (const ch of rawChannels) {
+            if (!serverMap.has(ch.guild_id)) {
+              serverMap.set(ch.guild_id, {
+                guild_id: ch.guild_id,
+                guild_name: ch.guild_name || ch.guild_id,
+                channels: []
+              });
+            }
+            serverMap.get(ch.guild_id).channels.push({
+              channel_id: ch.channel_id,
+              name: ch.name,
+              guild_id: ch.guild_id,
+              transcripts: []
+            });
+          }
+          for (const t of state.dictionary.allTranscripts) {
+            const s = serverMap.get(t.guild_id);
+            if (s) {
+              const c = s.channels.find(ch => ch.channel_id === t.channel_id);
+              if (c) {
+                c.transcripts.push(t);
+              }
+            }
+          }
+          state.dictionary.serversList = Array.from(serverMap.values()).map(s => ({
+            ...s,
+            channels: s.channels.map(c => ({
+              ...c,
+              transcripts: c.transcripts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            }))
+          }));
+          const cont = document.querySelector('#messages-subcontent');
+          if (cont) {
+            if (state.dictionary.level === 'channels') {
+              renderDictionaryChannels(cont, document.querySelector('#tab-content-messages') || document.body);
+            } else if (state.dictionary.level === 'servers') {
+              renderDictionaryServers(cont, document.querySelector('#tab-content-messages') || document.body);
+            }
+          }
+        } catch {}
+      }
     }, 12000);
   }
 
@@ -2519,9 +2620,120 @@
       `;
     }
 
-    html += `</div>`;
-    feed.innerHTML = html;
-  }
+    // Add message bar at bottom just like Discord to send messages
+    const composer = document.createElement('div');
+    composer.className = 'dict-chat-composer';
+    composer.innerHTML = `
+      ${state.dictionary.replyTo ? `
+        <div class="dict-reply-preview">
+          <div class="dict-reply-bar"></div>
+          <div class="dict-reply-info">
+            <div style="font-size: 12px; color: #949BA4;">Replying to <strong style="color: #5865F2;">${escapeHtml(state.dictionary.replyTo.author || 'User')}</strong></div>
+            <div style="font-size: 11px; color: #B5BAC1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px;">${escapeHtml((state.dictionary.replyTo.content || '').slice(0, 60))}${(state.dictionary.replyTo.content||'').length > 60 ? '...' : ''}</div>
+          </div>
+          <button class="dict-reply-cancel" id="cancel-reply-btn">✕</button>
+        </div>
+      ` : ''}
+      <div class="dict-composer-row">
+        <input type="text" id="dict-message-input" class="dict-composer-input" placeholder="Message #${escapeHtml(channelName)}" />
+        <button id="dict-send-btn" class="dict-send-btn">Send</button>
+      </div>
+    `;
+    const containerEl = document.querySelector('.dict-chat-container');
+    if (containerEl && !containerEl.querySelector('.dict-chat-composer')) {
+      containerEl.appendChild(composer);
+    }
+    const sendBtnEl = document.getElementById('dict-send-btn');
+    const inputEl = document.getElementById('dict-message-input');
+    if (sendBtnEl && inputEl) {
+      sendBtnEl.onclick = async () => {
+        const content = inputEl.value.trim();
+        if (!content) return;
+        sendBtnEl.disabled = true;
+        sendBtnEl.textContent = 'Sending...';
+        try {
+          await api('/api/messaging/send', {
+            method: 'POST',
+            body: {
+              type: 'bot',
+              channel_id: channelId,
+              content: content,
+              reply_to_message_id: state.dictionary.replyTo ? state.dictionary.replyTo.message_id : null,
+              mention_author: true
+            }
+          });
+          inputEl.value = '';
+          state.dictionary.replyTo = null;
+          showToast('Message sent', 'success');
+          await syncChannelMessages(true, allMessagesMap);
+          renderDictionaryChat(container, mainContainer);
+        } catch (err) {
+          showToast(err.message, 'error');
+        } finally {
+          sendBtnEl.disabled = false;
+          sendBtnEl.textContent = 'Send';
+        }
+      };
+      inputEl.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendBtnEl.click();
+        }
+      };
+    }
+    const cancelReplyBtn = document.getElementById('cancel-reply-btn');
+    if (cancelReplyBtn) {
+      cancelReplyBtn.onclick = () => {
+        state.dictionary.replyTo = null;
+        renderDictionaryChat(container, mainContainer);
+      };
+    }
+
+    // Add right-click context menu for messages
+    const messageRows = feed.querySelectorAll('.discord-msg-row');
+    messageRows.forEach(row => {
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        document.querySelectorAll('.context-menu').forEach(m => m.remove());
+        const msgId = row.id.replace('dict-msg-', '');
+        const msg = messages.find(m => m.message_id === msgId);
+        if (!msg) return;
+        const menu = document.createElement('div');
+        menu.className = 'context-menu';
+        menu.style.position = 'fixed';
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+        menu.style.zIndex = '10000';
+        menu.innerHTML = `
+          <div class="context-menu-item" data-action="reply">Reply</div>
+          <div class="context-menu-item" data-action="go-to-message">Go to message</div>
+        `;
+        document.body.appendChild(menu);
+        menu.querySelector('[data-action="reply"]').addEventListener('click', () => {
+          state.dictionary.replyTo = {
+            message_id: msg.message_id,
+            author: msg.author_display_name || msg.author_username,
+            content: msg.content
+          };
+          renderDictionaryChat(container, mainContainer);
+          const input = document.getElementById('dict-message-input');
+          if (input) input.focus();
+          menu.remove();
+        });
+        menu.querySelector('[data-action="go-to-message"]').addEventListener('click', () => {
+          const url = `https://discord.com/channels/${msg.guild_id}/${msg.channel_id}/${msg.message_id}`;
+          window.open(url, '_blank');
+          menu.remove();
+        });
+        const removeMenu = (ev) => {
+          if (!menu.contains(ev.target)) {
+            menu.remove();
+            document.removeEventListener('click', removeMenu);
+          }
+        };
+        setTimeout(() => document.addEventListener('click', removeMenu), 0);
+      });
+    });
 
   // Helper: Renders Discord Thread / Reply Lead Header
   function renderReplyLeadHtml(reply) {

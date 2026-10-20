@@ -131,15 +131,23 @@ export async function listMonitoredChannels(db) {
 }
 
 /**
- * Updates monitoring toggle for a channel.
+ * Updates monitoring toggle and poll limit for a channel.
  */
-export async function updateChannelMonitoring(db, channelId, isMonitored) {
+export async function updateChannelMonitoring(db, channelId, isMonitored, pollLimit = null) {
   const now = new Date().toISOString();
-  await db.prepare(`
-    UPDATE channels 
-    SET is_monitored = ?, updated_at = ?
-    WHERE channel_id = ?
-  `).bind(isMonitored ? 1 : 0, now, channelId).run();
+  if (pollLimit !== null && pollLimit !== undefined) {
+    await db.prepare(`
+      UPDATE channels 
+      SET is_monitored = ?, poll_limit = ?, updated_at = ?
+      WHERE channel_id = ?
+    `).bind(isMonitored ? 1 : 0, pollLimit, now, channelId).run();
+  } else {
+    await db.prepare(`
+      UPDATE channels 
+      SET is_monitored = ?, updated_at = ?
+      WHERE channel_id = ?
+    `).bind(isMonitored ? 1 : 0, now, channelId).run();
+  }
 
   if (isMonitored) {
     const msg = await db.prepare('SELECT message_id FROM messages WHERE channel_id = ? LIMIT 1').bind(channelId).first();

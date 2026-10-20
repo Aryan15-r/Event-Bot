@@ -167,7 +167,7 @@ export async function pollChannel(db, client, channel) {
     if (!cursor) {
       // First-run initialization: Fetch up to 50 latest messages
       const rawMessages = await client.getChannelMessages(channelId, {
-        limit: CONFIG_DEFAULTS.INITIAL_BACKFILL_LIMIT
+        limit: channel.poll_limit || CONFIG_DEFAULTS.INITIAL_BACKFILL_LIMIT
       });
 
       if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
@@ -208,7 +208,7 @@ export async function pollChannel(db, client, channel) {
         pageCount++;
         const rawMessages = await client.getChannelMessages(channelId, {
           after: currentAfter,
-          limit: 100
+          limit: channel.poll_limit || 100
         });
 
         if (!Array.isArray(rawMessages) || rawMessages.length === 0) {

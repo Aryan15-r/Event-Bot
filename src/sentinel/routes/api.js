@@ -145,7 +145,10 @@ export async function handleApiRoute(request, env, ctx) {
 
       for (const item of updates) {
         if (item.channel_id && typeof item.is_monitored === 'boolean') {
-          await updateChannelMonitoring(env.DB, item.channel_id, item.is_monitored);
+          await updateChannelMonitoring(env.DB, item.channel_id, item.is_monitored, item.poll_limit !== undefined ? item.poll_limit : null);
+          updatedCount++;
+        } else if (item.channel_id && item.poll_limit !== undefined) {
+          await updateChannelMonitoring(env.DB, item.channel_id, item.is_monitored !== undefined ? item.is_monitored : true, item.poll_limit);
           updatedCount++;
         }
       }
