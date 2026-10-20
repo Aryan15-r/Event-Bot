@@ -1763,6 +1763,99 @@
   }
 
   // =========================================================================
+  /**
+   * Builds the Dictionary server -> channel folder hierarchy.
+   * Shared by the initial load and the auto-sync refresh so both produce an
+   * identical shape (renderDictionaryServers/Channels rely on these fields).
+   */
+  function buildServersList(rawTranscripts, rawServers, rawChannels) {
+    const serverMap = new Map();
+
+    // 1. Seed with discovered servers from /api/servers
+    for (const s of rawServers) {
+      serverMap.set(s.guild_id, {
+        guild_id: s.guild_id,
+        guild_name: s.name || `Server (${s.guild_id})`,
+        icon_hash: s.icon_hash,
+        member_count: s.member_count || 0,
+        channels: new Map(),
+        totalTranscripts: 0,
+        totalMessages: 0,
+        lastActivity: s.last_synced_at || null
+      });
+    }
+
+    // 2. Populate ONLY configured monitored channels from /api/channels
+    for (const c of rawChannels) {
+      // Strictly only channels enabled in server configuration
+      if (!c.is_monitored) continue;
+
+      const gId = c.guild_id || 'unassigned_server';
+      const gName = c.guild_name || (gId === 'unassigned_server' ? 'Global / Unassigned' : `Server (${gId})`);
+
+      if (!serverMap.has(gId)) {
+        serverMap.set(gId, {
+          guild_id: gId,
+          guild_name: gName,
+          icon_hash: null,
+          member_count: 0,
+          channels: new Map(),
+          totalTranscripts: 0,
+          totalMessages: 0,
+          lastActivity: c.latest_message_at || c.updated_at || null
+        });
+      }
+
+      const sObj = serverMap.get(gId);
+      const cId = c.channel_id;
+      const cName = c.name || 'channel';
+
+      if (!sObj.channels.has(cId)) {
+        sObj.channels.set(cId, {
+          channel_id: cId,
+          channel_name: cName,
+          parent_name: c.parent_name,
+          channel_type: c.channel_type,
+          is_monitored: true,
+          transcripts: [],
+          totalMessages: c.message_count || 0,
+          lastActivity: c.latest_message_at || c.updated_at || null
+        });
+        sObj.totalMessages += (c.message_count || 0);
+      }
+      if (c.latest_message_at && (!sObj.lastActivity || new Date(c.latest_message_at) > new Date(sObj.lastActivity))) {
+        sObj.lastActivity = c.latest_message_at;
+      }
+    }
+
+    // 3. Aggregate transcripts into server -> channel hierarchy (only for monitored channels)
+    for (const t of rawTranscripts) {
+      const gId = t.guild_id || 'unassigned_server';
+      const sObj = serverMap.get(gId);
+      if (!sObj) continue;
+
+      const cId = t.channel_id || 'unknown_channel';
+      // Strictly link only to channels enabled in server configuration
+      if (!sObj.channels.has(cId)) continue;
+
+      sObj.totalTranscripts++;
+      const cObj = sObj.channels.get(cId);
+      cObj.transcripts.push(t);
+      if (new Date(t.created_at) > new Date(cObj.lastActivity || 0)) {
+        cObj.lastActivity = t.created_at;
+      }
+      if (!sObj.lastActivity || new Date(t.created_at) > new Date(sObj.lastActivity)) {
+        sObj.lastActivity = t.created_at;
+      }
+    }
+
+    // Convert Map to arrays, ensuring channels are strictly monitored
+    return Array.from(serverMap.values()).map(s => ({
+      ...s,
+      channels: Array.from(s.channels.values()).filter(c => c.is_monitored)
+    }));
+  }
+
   // Sub-Tab 3: Dictionary (Servers [Main Folder] -> Channels [Sub-Folder] -> Channel Chat Modal)
   // =========================================================================
 
@@ -1788,91 +1881,7 @@
         const rawChannels = channelsRes.channels || [];
         state.dictionary.allTranscripts = rawTranscripts;
 
-        const serverMap = new Map();
-
-        // 1. Seed with discovered servers from /api/servers
-        for (const s of rawServers) {
-          serverMap.set(s.guild_id, {
-            guild_id: s.guild_id,
-            guild_name: s.name || `Server (${s.guild_id})`,
-            icon_hash: s.icon_hash,
-            member_count: s.member_count || 0,
-            channels: new Map(),
-            totalTranscripts: 0,
-            totalMessages: 0,
-            lastActivity: s.last_synced_at || null
-          });
-        }
-
-        // 2. Populate ONLY configured monitored channels from /api/channels
-        for (const c of rawChannels) {
-          // Strictly only channels enabled in server configuration
-          if (!c.is_monitored) continue;
-
-          const gId = c.guild_id || 'unassigned_server';
-          const gName = c.guild_name || (gId === 'unassigned_server' ? 'Global / Unassigned' : `Server (${gId})`);
-
-          if (!serverMap.has(gId)) {
-            serverMap.set(gId, {
-              guild_id: gId,
-              guild_name: gName,
-              icon_hash: null,
-              member_count: 0,
-              channels: new Map(),
-              totalTranscripts: 0,
-              totalMessages: 0,
-              lastActivity: c.latest_message_at || c.updated_at || null
-            });
-          }
-
-          const sObj = serverMap.get(gId);
-          const cId = c.channel_id;
-          const cName = c.name || 'channel';
-
-          if (!sObj.channels.has(cId)) {
-            sObj.channels.set(cId, {
-              channel_id: cId,
-              channel_name: cName,
-              parent_name: c.parent_name,
-              channel_type: c.channel_type,
-              is_monitored: true,
-              transcripts: [],
-              totalMessages: c.message_count || 0,
-              lastActivity: c.latest_message_at || c.updated_at || null
-            });
-            sObj.totalMessages += (c.message_count || 0);
-          }
-          if (c.latest_message_at && (!sObj.lastActivity || new Date(c.latest_message_at) > new Date(sObj.lastActivity))) {
-            sObj.lastActivity = c.latest_message_at;
-          }
-        }
-
-        // 3. Aggregate transcripts into server -> channel hierarchy (only for monitored channels)
-        for (const t of rawTranscripts) {
-          const gId = t.guild_id || 'unassigned_server';
-          const sObj = serverMap.get(gId);
-          if (!sObj) continue;
-
-          const cId = t.channel_id || 'unknown_channel';
-          // Strictly link only to channels enabled in server configuration
-          if (!sObj.channels.has(cId)) continue;
-
-          sObj.totalTranscripts++;
-          const cObj = sObj.channels.get(cId);
-          cObj.transcripts.push(t);
-          if (new Date(t.created_at) > new Date(cObj.lastActivity || 0)) {
-            cObj.lastActivity = t.created_at;
-          }
-          if (!sObj.lastActivity || new Date(t.created_at) > new Date(sObj.lastActivity)) {
-            sObj.lastActivity = t.created_at;
-          }
-        }
-
-        // Convert Map to arrays, ensuring channels are strictly monitored
-        state.dictionary.serversList = Array.from(serverMap.values()).map(s => ({
-          ...s,
-          channels: Array.from(s.channels.values()).filter(c => c.is_monitored)
-        }));
+        state.dictionary.serversList = buildServersList(rawTranscripts, rawServers, rawChannels);
 
       } catch (err) {
         showToast('Error loading dictionary: ' + err.message, 'error');
@@ -1883,10 +1892,12 @@
 
     if (state.dictionary.level === 'channels') {
       renderDictionaryChannels(container, mainContainer);
+      setupDictionaryAutoSync();
     } else if (state.dictionary.level === 'chat') {
       renderDictionaryChat(container, mainContainer);
     } else {
       renderDictionaryServers(container, mainContainer);
+      setupDictionaryAutoSync();
     }
   }
 
@@ -2204,7 +2215,6 @@
     const channelObj = server ? server.channels.find(c => c.channel_id === channelId) : null;
     const transcripts = channelObj ? channelObj.transcripts : [];
 
-    const allMessagesMap = new Map();
     for (const m of messages) {
       allMessagesMap.set(m.message_id, m);
     }
@@ -2392,14 +2402,30 @@
       showToast(`⬇️ Downloaded ${filename}`, 'success');
     });
 
-    // Auto-sync polling every 12 seconds while viewing channel chat
+    setupDictionaryAutoSync();
+  }
+
+  // Shared message lookup map (message_id -> message) for reply resolution.
+  const allMessagesMap = new Map();
+
+  /**
+   * Starts the 12-second Dictionary auto-sync timer.
+   * Covers both the channel chat (live message refresh) and the list views
+   * (server/channel folder refresh). Safe to call repeatedly: the previous
+   * timer is always cleared first.
+   */
+  function setupDictionaryAutoSync() {
     clearInterval(state.dictionary.syncTimer);
     state.dictionary.syncTimer = setInterval(async () => {
-      if (state.currentTab === 'messages' && state.messagesSubTab === 'dictionary' && state.dictionary.level === 'chat' && state.dictionary.autoSync) {
+      if (state.currentTab !== 'messages' || state.messagesSubTab !== 'dictionary' || !state.dictionary.autoSync) return;
+
+      if (state.dictionary.level === 'chat') {
         await syncChannelMessages(true, allMessagesMap);
+        return;
       }
+
       // Also auto-sync dictionary list views
-      if (state.currentTab === 'messages' && state.messagesSubTab === 'dictionary' && (state.dictionary.level === 'servers' || state.dictionary.level === 'channels') && state.dictionary.autoSync) {
+      if (state.dictionary.level === 'servers' || state.dictionary.level === 'channels') {
         try {
           const [transcriptsRes, serversRes, channelsRes] = await Promise.all([
             api('/api/transcripts').catch(() => ({ ok: true, transcripts: [] })),
@@ -2407,53 +2433,18 @@
             api('/api/channels?monitored_only=1').catch(() => ({ ok: true, channels: [] }))
           ]);
           state.dictionary.allTranscripts = transcriptsRes.transcripts || [];
-          const rawServers = serversRes.servers || [];
-          const rawChannels = channelsRes.channels || [];
-          const serverMap = new Map();
-          for (const srv of rawServers) {
-            serverMap.set(srv.guild_id, {
-              guild_id: srv.guild_id,
-              guild_name: srv.name || srv.guild_id,
-              channels: []
-            });
-          }
-          for (const ch of rawChannels) {
-            if (!serverMap.has(ch.guild_id)) {
-              serverMap.set(ch.guild_id, {
-                guild_id: ch.guild_id,
-                guild_name: ch.guild_name || ch.guild_id,
-                channels: []
-              });
-            }
-            serverMap.get(ch.guild_id).channels.push({
-              channel_id: ch.channel_id,
-              name: ch.name,
-              guild_id: ch.guild_id,
-              transcripts: []
-            });
-          }
-          for (const t of state.dictionary.allTranscripts) {
-            const s = serverMap.get(t.guild_id);
-            if (s) {
-              const c = s.channels.find(ch => ch.channel_id === t.channel_id);
-              if (c) {
-                c.transcripts.push(t);
-              }
-            }
-          }
-          state.dictionary.serversList = Array.from(serverMap.values()).map(s => ({
-            ...s,
-            channels: s.channels.map(c => ({
-              ...c,
-              transcripts: c.transcripts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-            }))
-          }));
-          const cont = document.querySelector('#messages-subcontent');
+          state.dictionary.serversList = buildServersList(
+            transcriptsRes.transcripts || [],
+            serversRes.servers || [],
+            channelsRes.channels || []
+          );
+          const cont = document.getElementById('messages-subtab-content');
           if (cont) {
+            const mainCont = document.getElementById('content-container') || document.body;
             if (state.dictionary.level === 'channels') {
-              renderDictionaryChannels(cont, document.querySelector('#tab-content-messages') || document.body);
+              renderDictionaryChannels(cont, mainCont);
             } else if (state.dictionary.level === 'servers') {
-              renderDictionaryServers(cont, document.querySelector('#tab-content-messages') || document.body);
+              renderDictionaryServers(cont, mainCont);
             }
           }
         } catch {}
@@ -2479,6 +2470,10 @@
 
       const existingIds = new Set((state.dictionary.currentMessages || []).map(m => m.message_id));
       const newlyArrived = freshMsgs.filter(m => !existingIds.has(m.message_id));
+
+      // The user may have switched channels while this fetch was in flight.
+      // Writing now would paint the previous channel's messages into the new one.
+      if (state.dictionary.selectedChannelId !== channelId) return;
 
       if (newlyArrived.length > 0) {
         state.dictionary.currentMessages = freshMsgs;
@@ -2622,6 +2617,9 @@
       `;
     }
 
+    html += `</div>`;
+    feed.innerHTML = html;
+
     // Add message bar at bottom just like Discord to send messages
     const composer = document.createElement('div');
     composer.className = 'dict-chat-composer';
@@ -2696,6 +2694,7 @@
     messageRows.forEach(row => {
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         document.querySelectorAll('.context-menu').forEach(m => m.remove());
         const msgId = row.id.replace('dict-msg-', '');
         const msg = messages.find(m => m.message_id === msgId);
@@ -5625,6 +5624,13 @@
       closeContextMenu();
 
       if (!state.authenticated) return;
+
+      // The Dictionary chat modal renders its own message context menu
+      // (Reply / Go to message). Skip the global menu there so it does not
+      // overlay and swallow clicks on the modal's menu.
+      if (e.target && e.target.closest && e.target.closest('.discord-msg-row')) {
+        return;
+      }
 
       const menu = document.createElement('div');
       menu.className = 'custom-context-menu';

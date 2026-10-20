@@ -12,7 +12,9 @@
     "register": "node register.js",
     "build:assets": "node scripts/bundle-sentinel-assets.js",
     "test": "node --test",
+    "prestart": "npm run build:assets",
     "start": "wrangler deploy",
+    "predev": "npm run build:assets",
     "dev": "wrangler dev"
   }
 }

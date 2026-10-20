@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS channels (
   parent_id TEXT,
   parent_name TEXT,
   is_monitored INTEGER NOT NULL DEFAULT 0,
+  poll_limit INTEGER NOT NULL DEFAULT 50,
   last_poll_attempt_at TEXT,
   last_successful_poll_at TEXT,
   last_poll_status TEXT,
@@ -204,4 +205,16 @@ export async function ensureSchema(db) {
 
   const batch = statements.map(sql => db.prepare(sql));
   await db.batch(batch);
+
+  // Column migrations — CREATE TABLE IF NOT EXISTS never adds columns to
+  // databases that already exist.
+  const migrations = [
+    'ALTER TABLE messages ADD COLUMN reply_to_json TEXT',
+    'ALTER TABLE channels ADD COLUMN poll_limit INTEGER NOT NULL DEFAULT 50'
+  ];
+  for (const sql of migrations) {
+    try {
+      await db.prepare(sql).run();
+    } catch {}
+  }
 }

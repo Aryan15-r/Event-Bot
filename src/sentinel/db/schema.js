@@ -197,17 +197,34 @@ CREATE INDEX IF NOT EXISTS idx_sent_alerts_sent_at ON sent_alerts(sent_at DESC);
  */
 export async function ensureSchema(db) {
   if (!db) throw new Error('Database binding DB is missing');
-  
-  // D1 batch execution
+
+  // Column migrations run FIRST: existing databases were created before these
+  // columns existed, and CREATE TABLE IF NOT EXISTS will never add them.
+  const migrations = [
+    'ALTER TABLE messages ADD COLUMN reply_to_json TEXT',
+    'ALTER TABLE channels ADD COLUMN poll_limit INTEGER NOT NULL DEFAULT 50'
+  ];
+  for (const sql of migrations) {
+    try {
+      await db.prepare(sql).run();
+    } catch (err) {
+      // "duplicate column" = already migrated, "no such table" = fresh DB
+      // created by the batch below. Anything else is a real failure.
+      if (!/duplicate column|no such table/i.test(err.message || '')) {
+        console.error('[Sentinel Schema] Migration failed:', sql, '-', err.message);
+      }
+    }
+  }
+
+  // Base schema — idempotent no-ops on databases that already exist.
   const statements = INITIAL_SCHEMA_SQL
     .split(';')
     .map(s => s.trim())
     .filter(s => s.length > 0);
 
-  const batch = statements.map(sql => db.prepare(sql));
-  await db.batch(batch);
-
   try {
-    await db.prepare('ALTER TABLE messages ADD COLUMN reply_to_json TEXT').run();
-  } catch {}
+    await db.batch(statements.map(sql => db.prepare(sql)));
+  } catch (err) {
+    console.error('[Sentinel Schema] Base schema batch failed:', err.message);
+  }
 }

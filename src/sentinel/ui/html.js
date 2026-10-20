@@ -2,6 +2,7 @@
 // Server-rendered HTML dashboard shell with security attributes and metadata
 
 import { getSecurityHeaders } from '../utils/security.js';
+import { ASSETS_VERSION } from './assets.js';
 
 export function renderDashboardHtml() {
   return `<!DOCTYPE html>
@@ -15,11 +16,11 @@ export function renderDashboardHtml() {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=${ASSETS_VERSION}">
 </head>
 <body>
   <div id="app-root"></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=${ASSETS_VERSION}"></script>
 </body>
 </html>`;
 }

@@ -6,9 +6,67 @@ import { handleHealth } from './services/health.js';
 import { handleDigest } from './services/digest.js';
 import { handleReply } from './services/replies.js';
 import { handleApiRoute } from './routes/api.js';
+import { handleQuickSendRoute } from './routes/quick-send.js';
 import { handleDashboardPage } from './ui/html.js';
-import { STYLES_CSS, APP_JS } from './ui/assets.js';
+import { STYLES_CSS, APP_JS, ASSETS_VERSION } from './ui/assets.js';
 import { runScheduledPoll } from './services/polling.js';
+import { ensureSchema } from './db/schema.js';
+
+let schemaPromise = null;
+
+/**
+ * Ensures the D1 schema (and any pending column migrations) exists.
+ * Runs at most once per isolate. Failures are logged but never propagated —
+ * a transient D1 outage must not take down the dashboard or its assets.
+ */
+function ensureSchemaReady(env) {
+  if (!schemaPromise) {
+    schemaPromise = ensureSchema(env.DB)
+      .then(() => {
+        console.log('[Sentinel Schema] Schema verified');
+      })
+      .catch((err) => {
+        console.error('[Sentinel Schema] Failed to ensure schema:', err.message);
+        schemaPromise = null; // allow the next request to retry
+      });
+  }
+  return schemaPromise;
+}
+
+/**
+ * Serves a frontend asset with cache-safe headers.
+ * Versioned requests (?v=<ASSETS_VERSION>) are immutable and cached for a year;
+ * unversioned requests are always revalidated via ETag.
+ * @param {Request} request
+ * @param {string} body
+ * @param {string} contentType
+ * @returns {Response}
+ */
+function serveAsset(request, body, contentType) {
+  const url = new URL(request.url);
+  const requestedVersion = url.searchParams.get('v');
+  const isVersioned = requestedVersion === ASSETS_VERSION;
+  const etag = `"${ASSETS_VERSION}"`;
+
+  const headers = {
+    'Content-Type': contentType,
+    'ETag': etag,
+    'Vary': 'Accept-Encoding'
+  };
+
+  if (isVersioned) {
+    headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+  } else {
+    headers['Cache-Control'] = 'no-cache';
+  }
+
+  const ifNoneMatch = request.headers.get('If-None-Match');
+  if (ifNoneMatch && ifNoneMatch.split(',').some(t => t.trim() === etag)) {
+    return new Response(null, { status: 304, headers });
+  }
+
+  return new Response(body, { status: 200, headers });
+}
 
 export default {
   /**
@@ -37,7 +95,10 @@ export default {
         });
       }
 
-      // 2. Public Operational & Diagnostic Endpoints
+      // 2. Ensure D1 schema exists (incl. column migrations) before serving API traffic
+      await ensureSchemaReady(env);
+
+      // 3. Public Operational & Diagnostic Endpoints
       if (path === '/health' && method === 'GET') {
         return await handleHealth(request, env);
       }
@@ -46,43 +107,39 @@ export default {
         return await handleDigest(request, env);
       }
 
-      // 3. Optional Discord Write Endpoint (Replies)
+      // 4. Optional Discord Write Endpoint (Replies)
       if (path === '/reply' && method === 'POST') {
         return await handleReply(request, env);
       }
 
-      // 4. Authenticated REST API Routes
+      // 4b. Quick-send (bearer-token auth, no session cookie)
+      if (path.startsWith('/api/quick-send')) {
+        return await handleQuickSendRoute(request, env, ctx);
+      }
+
+      // 5. Authenticated REST API Routes
       if (path.startsWith('/api/')) {
         return await handleApiRoute(request, env, ctx);
       }
 
-      // 5. Static UI Assets
+      // 6. Static UI Assets
+      // The ?v=<content hash> param makes each build a distinct URL, so a deploy
+      // invalidates stale browser caches immediately. Unversioned requests stay
+      // revalidated (no-cache + ETag) so they never serve a stale bundle.
       if (path === '/styles.css' && method === 'GET') {
-        return new Response(STYLES_CSS, {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/css; charset=utf-8',
-            'Cache-Control': 'public, max-age=3600'
-          }
-        });
+        return serveAsset(request, STYLES_CSS, 'text/css; charset=utf-8');
       }
 
       if (path === '/app.js' && method === 'GET') {
-        return new Response(APP_JS, {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/javascript; charset=utf-8',
-            'Cache-Control': 'public, max-age=3600'
-          }
-        });
+        return serveAsset(request, APP_JS, 'application/javascript; charset=utf-8');
       }
 
-      // 6. Dashboard Frontend Shell (SPA routes)
+      // 7. Dashboard Frontend Shell (SPA routes)
       if (['/', '/login', '/servers', '/channels', '/messages', '/messaging', '/formatter', '/settings', '/health-view'].includes(path) || !path.includes('.')) {
         return handleDashboardPage();
       }
 
-      // 7. Unmatched resource fallback
+      // 8. Unmatched resource fallback
       return new Response('Not Found', { status: 404 });
     } catch (err) {
       // Safe error response — Never expose message text or stack trace to client
@@ -113,6 +170,7 @@ export default {
 
     const executionPromise = (async () => {
       try {
+        await ensureSchemaReady(env);
         const result = await runScheduledPoll(env.DB, config.discordToken, config.messageRetentionHours || 48, env);
         console.log(`[Sentinel Cron] Finished poll execution [Run ID: ${result.runId}] status: ${result.status}`, JSON.stringify(result.summary));
       } catch (err) {
