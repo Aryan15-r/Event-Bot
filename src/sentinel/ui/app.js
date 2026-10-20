@@ -2275,6 +2275,8 @@
 
     const feed = document.getElementById('dict-chat-feed-container');
     renderDictionaryChatBody(feed, allMessagesMap);
+    state.dictionary._container = container;
+    state.dictionary._mainContainer = mainContainer;
 
     // Breadcrumbs and Back navigation
     const backBtn = document.getElementById('dict-back-to-channels-btn');
@@ -2666,7 +2668,7 @@
           state.dictionary.replyTo = null;
           showToast('Message sent', 'success');
           await syncChannelMessages(true, allMessagesMap);
-          renderDictionaryChat(container, mainContainer);
+          renderDictionaryChat(state.dictionary._container, state.dictionary._mainContainer);
         } catch (err) {
           showToast(err.message, 'error');
         } finally {
@@ -2685,7 +2687,7 @@
     if (cancelReplyBtn) {
       cancelReplyBtn.onclick = () => {
         state.dictionary.replyTo = null;
-        renderDictionaryChat(container, mainContainer);
+        renderDictionaryChat(state.dictionary._container, state.dictionary._mainContainer);
       };
     }
 
@@ -2715,7 +2717,7 @@
             author: msg.author_display_name || msg.author_username,
             content: msg.content
           };
-          renderDictionaryChat(container, mainContainer);
+          renderDictionaryChat(state.dictionary._container, state.dictionary._mainContainer);
           const input = document.getElementById('dict-message-input');
           if (input) input.focus();
           menu.remove();
@@ -2734,6 +2736,7 @@
         setTimeout(() => document.addEventListener('click', removeMenu), 0);
       });
     });
+  }
 
   // Helper: Renders Discord Thread / Reply Lead Header
   function renderReplyLeadHtml(reply) {
