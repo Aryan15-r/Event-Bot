@@ -427,6 +427,15 @@ export async function saveMessagesToDb(db, messages) {
         author_role_ids = excluded.author_role_ids,
         reply_to_json = coalesce(excluded.reply_to_json, messages.reply_to_json),
         last_seen_at = excluded.last_seen_at
+      WHERE
+        IFNULL(messages.content, '')              != IFNULL(excluded.content, '')
+        OR IFNULL(messages.edited_at, '')         != IFNULL(excluded.edited_at, '')
+        OR IFNULL(messages.attachments_json, '')  != IFNULL(excluded.attachments_json, '')
+        OR IFNULL(messages.embeds_json, '')       != IFNULL(excluded.embeds_json, '')
+        OR IFNULL(messages.author_display_name,'')!= IFNULL(excluded.author_display_name, '')
+        OR IFNULL(messages.author_role_ids, '')   != IFNULL(excluded.author_role_ids, '')
+        OR IFNULL(messages.author_username, '')   != IFNULL(excluded.author_username, '')
+        OR IFNULL(messages.reply_to_json, '')      != IFNULL(coalesce(excluded.reply_to_json, messages.reply_to_json), '')
     `).bind(
       m.message_id,
       m.guild_id,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pollChannel } from '../src/sentinel/services/polling.js';
-import { listAllChannels, updateChannelMonitoring } from '../src/sentinel/db/queries.js';
+import { listAllChannels, updateChannelMonitoring, upsertMessages } from '../src/sentinel/db/queries.js';
 
 test('pollChannel: forces initial backfill (limit 50, no after) when channel has no cursor', async () => {
   const preparedCalls = [];
@@ -164,6 +164,40 @@ test('pollChannel: uses cursor with after when channel already has local message
   assert.equal(result.success, true);
   assert.equal(clientCalls.length, 1);
   assert.equal(clientCalls[0].options.after, '1500000000000000001');
+});
+
+test('upsertMessages: skips writing when the stored message is unchanged', async () => {
+  const executedSql = [];
+  // A batch result with changes === 0 means the conditional ON CONFLICT
+  // DO UPDATE ... WHERE matched nothing, so D1 wrote no row.
+  const mockDb = {
+    prepare(sql) {
+      executedSql.push(sql);
+      return {
+        bind(...args) {
+          return {
+            async first() { return null; },
+            async run() { return { success: true, meta: { changes: 1 } }; },
+            async all() { return { results: [] }; }
+          };
+        }
+      };
+    },
+    async batch(chunk) {
+      // Both rows are already stored with identical content.
+      return chunk.map(() => ({ meta: { changes: 0 } }));
+    }
+  };
+
+  const result = await upsertMessages(mockDb, [
+    { id: 'm1', guild_id: 'g1', channel_id: 'c1', author: { id: 'u1', username: 'alice' }, content: 'same' },
+    { id: 'm2', guild_id: 'g1', channel_id: 'c1', author: { id: 'u1', username: 'alice' }, content: 'same too' }
+  ]);
+
+  assert.equal(result.inserted, 0);
+  assert.equal(result.unchanged, 2);
+  // The upsert must be conditional, otherwise every re-fetch rewrites the row.
+  assert.match(executedSql[0], /DO UPDATE SET[\s\S]*WHERE[\s\S]*IFNULL\(messages\.content/);
 });
 
 test('listAllChannels: respects monitoredOnly filter flag', async () => {

@@ -156,6 +156,7 @@ export async function pollChannel(db, client, channel) {
 
   let totalInserted = 0;
   let totalUpdated = 0;
+  let totalUnchanged = 0;
   let newestMessageId = cursor;
   let emptyInitial = false;
   const newMessages = [];
@@ -181,9 +182,10 @@ export async function pollChannel(db, client, channel) {
       const sorted = [...rawMessages].sort((a, b) => compareSnowflakes(a.id, b.id));
       const normalized = sorted.map(m => normalizeMessage(m, guildId, channelId));
 
-      const { inserted, updated } = await upsertMessages(db, normalized);
+      const { inserted, updated, unchanged } = await upsertMessages(db, normalized);
       totalInserted += inserted;
       totalUpdated += updated;
+      totalUnchanged += unchanged;
       newMessages.push(...normalized);
 
       newestMessageId = sorted[sorted.length - 1].id;
@@ -217,9 +219,10 @@ export async function pollChannel(db, client, channel) {
         const sorted = [...rawMessages].sort((a, b) => compareSnowflakes(a.id, b.id));
         const normalized = sorted.map(m => normalizeMessage(m, guildId, channelId));
 
-        const { inserted, updated } = await upsertMessages(db, normalized);
+        const { inserted, updated, unchanged } = await upsertMessages(db, normalized);
         totalInserted += inserted;
         totalUpdated += updated;
+        totalUnchanged += unchanged;
         newMessages.push(...normalized);
 
         const pageMaxId = sorted[sorted.length - 1].id;
@@ -250,6 +253,7 @@ export async function pollChannel(db, client, channel) {
       success: true,
       inserted: totalInserted,
       updated: totalUpdated,
+      unchanged: totalUnchanged,
       error: null,
       emptyInitial,
       newMessages
@@ -266,6 +270,7 @@ export async function pollChannel(db, client, channel) {
       success: false,
       inserted: totalInserted,
       updated: totalUpdated,
+      unchanged: totalUnchanged,
       error: errorMsg,
       emptyInitial,
       newMessages: []
@@ -319,6 +324,7 @@ export async function runScheduledPoll(db, discordToken, retentionHours = 48, en
   let failed = 0;
   let totalInserted = 0;
   let totalUpdated = 0;
+  let totalUnchanged = 0;
   const errors = [];
   const allNewMessages = [];
 
@@ -337,6 +343,7 @@ export async function runScheduledPoll(db, discordToken, retentionHours = 48, en
         succeeded++;
         totalInserted += result.inserted;
         totalUpdated += result.updated;
+        totalUnchanged += result.unchanged || 0;
         if (Array.isArray(result.newMessages) && result.newMessages.length > 0) {
           allNewMessages.push(...result.newMessages);
         }
@@ -381,6 +388,7 @@ export async function runScheduledPoll(db, discordToken, retentionHours = 48, en
       failed,
       messagesInserted: totalInserted,
       messagesUpdated: totalUpdated,
+      messagesUnchanged: totalUnchanged,
       messagesPruned: retention.messagesPruned,
       summariesCreated: retention.summariesCreated,
       alerts,
